@@ -208,18 +208,24 @@ function App() {
         console.log("손 감지됨, 랜드마크 개수:", results.multiHandLandmarks.length);
         const landmarks = results.multiHandLandmarks[0];
         
-        // 손가락 5개 펴기 감지
-        const isHandOpen = detectOpenHand(landmarks);
-        console.log("손이 열려있는가?", isHandOpen);
+        // 손가락 상태 감지
+        const handState = detectHandState(landmarks);
+        console.log("손 상태:", handState);
         
-        if (isHandOpen) {
+        if (handState === 'open' || handState === 'closed') {
           setHandDetected(true);
           
-          // 손 위치에 따른 제스처 감지
-          const handPosition = getHandPosition(landmarks, canvas.width, canvas.height);
-          const gesture = detectGesture(handPosition, canvas.height);
+          // 손 위치에 따른 제스처 감지 (손이 열려있을 때만)
+          let gesture = "none";
+          if (handState === 'open') {
+            const handPosition = getHandPosition(landmarks, canvas.width, canvas.height);
+            gesture = detectGesture(handPosition, canvas.height);
+          } else if (handState === 'closed') {
+            // 손이 닫혀있으면 위로 스크롤
+            gesture = "up";
+          }
           
-          console.log("손 위치:", handPosition, "제스처:", gesture);
+          console.log("손 위치 기반 제스처:", gesture);
           
           setHandGesture(gesture);
           setScrollDirection(gesture);
@@ -230,7 +236,7 @@ function App() {
           // 손 랜드마크 그리기
           drawHandLandmarks(ctx, landmarks, canvas.width, canvas.height);
         } else {
-          console.log("손이 닫혀있음");
+          console.log("손이 부분적으로 열려있음 - 무시");
           setHandDetected(false);
           setHandGesture("none");
           setScrollDirection("none");
@@ -259,8 +265,8 @@ function App() {
     processFrame();
   };
 
-  // 손가락 5개 펴기 감지
-  const detectOpenHand = (landmarks) => {
+  // 손가락 상태 감지 (펴짐/접힘)
+  const detectHandState = (landmarks) => {
     const fingerTips = [4, 8, 12, 16, 20]; // 엄지, 검지, 중지, 약지, 새끼 손가락 끝
     const fingerPips = [3, 6, 10, 14, 18]; // 손가락 중간 관절
     
@@ -288,8 +294,14 @@ function App() {
     
     console.log(`총 ${openFingers}개 손가락이 펴져있음`);
     
-    // 4개 이상 펴져있으면 손이 열린 것으로 판단
-    return openFingers >= 4;
+    // 손 상태 반환: 'open' (4개 이상 펴짐), 'closed' (모두 접힘), 'partial' (부분적)
+    if (openFingers >= 4) {
+      return 'open';
+    } else if (openFingers === 0) {
+      return 'closed';
+    } else {
+      return 'partial';
+    }
   };
 
   // 손 위치 계산
@@ -321,7 +333,7 @@ function App() {
       setIsScrolling(true);
       window.scrollBy({ top: 50, behavior: "smooth" });
     } else if (gesture === "up") {
-      setIsScrolling(false);
+      setIsScrolling(true);
       window.scrollBy({ top: -100, behavior: "smooth" });
     } else {
       setIsScrolling(false);
@@ -567,13 +579,13 @@ function App() {
                 </div>
               )}
               
-              {/* 손 인식 상태 표시 */}
-              {isCameraActive && (
-                <div className="absolute top-2 right-2 bg-black bg-opacity-50 text-white px-2 py-1 rounded text-xs">
-                  <div>손: {handDetected ? '✅' : '⏳'}</div>
-                  <div>제스처: {handGesture}</div>
-                </div>
-              )}
+                        {/* 손 인식 상태 표시 */}
+          {isCameraActive && (
+            <div className="absolute top-2 right-2 bg-black bg-opacity-50 text-white px-2 py-1 rounded text-xs">
+              <div>손: {handDetected ? '✅' : '⏳'}</div>
+              <div>제스처: {handGesture === 'up' ? '⬆️ 위로' : handGesture === 'down' ? '⬇️ 아래로' : handGesture === 'center' ? '➡️ 정면' : '⏸️ 없음'}</div>
+            </div>
+          )}
               
               {/* 스크롤 방향 표시 */}
               {isCameraActive && scrollDirection !== 'none' && (
@@ -605,9 +617,9 @@ function App() {
                   handGesture !== 'none' ? 'bg-green-500' : 'bg-gray-400'
                 }`}></div>
                 <p className="text-sm text-green-700">
-                  {handGesture === 'up' && '⬆️ 위로'}
-                  {handGesture === 'down' && '⬇️ 아래로'}
-                  {handGesture === 'center' && '➡️ 정면'}
+                  {handGesture === 'up' && '⬆️ 위로 (손 접힘)'}
+                  {handGesture === 'down' && '⬇️ 아래로 (손 펴짐)'}
+                  {handGesture === 'center' && '➡️ 정면 (손 펴짐)'}
                   {handGesture === 'none' && '⏸️ 없음'}
                 </p>
               </div>
