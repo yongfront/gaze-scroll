@@ -312,6 +312,9 @@ function App() {
           } else if (handState === 'closed') {
             // 손이 닫혀있으면 위로 스크롤
             gesture = "up";
+          } else if (handState === 'two_finger_touch') {
+            // 두 손가락 터치 - 아래로 스크롤
+            gesture = "two_finger_touch";
           } else if (handState === 'index_only' || handState === 'index') {
             // 검지 한 손가락 - 빠른 스크롤
             gesture = "index_fast_down";
@@ -419,6 +422,7 @@ function App() {
   const detectHandState = (landmarks) => {
     const fingerTips = [4, 8, 12, 16, 20]; // 엄지, 검지, 중지, 약지, 새끼 손가락 끝
     const fingerPips = [3, 6, 10, 14, 18]; // 손가락 중간 관절
+    const fingerMcps = [2, 5, 9, 13, 17]; // 손가락 기저부
     
     let openFingers = 0;
     const fingerNames = ['엄지', '검지', '중지', '약지', '새끼'];
@@ -427,12 +431,20 @@ function App() {
     for (let i = 0; i < 5; i++) {
       const tip = landmarks[fingerTips[i]];
       const pip = landmarks[fingerPips[i]];
+      const mcp = landmarks[fingerMcps[i]];
       
       let isOpen = false;
-      if (i === 0) { // 엄지 - 더 관대한 조건
-        isOpen = tip.x < pip.x + 0.02; // 약간의 여유 추가
-      } else { // 나머지 손가락 - 더 관대한 조건
-        isOpen = tip.y < pip.y + 0.05; // 더 많은 여유 추가
+      if (i === 0) { // 엄지 - 더 정확한 감지
+        // 엄지는 x축 방향으로 펴지는지 확인
+        const thumbOpen = tip.x < pip.x + 0.01;
+        const thumbExtended = Math.abs(tip.x - mcp.x) > 0.05;
+        isOpen = thumbOpen && thumbExtended;
+      } else { // 나머지 손가락 - y축 방향으로 펴지는지 확인
+        // 손가락이 펴져있는지 확인 (끝이 중간 관절보다 위에 있음)
+        const fingerOpen = tip.y < pip.y + 0.03;
+        // 손가락이 충분히 펴져있는지 확인 (끝이 기저부보다 위에 있음)
+        const fingerExtended = tip.y < mcp.y + 0.05;
+        isOpen = fingerOpen && fingerExtended;
       }
       
       if (isOpen) {
@@ -447,7 +459,10 @@ function App() {
     
     console.log(`총 ${openFingers}개 손가락이 펴져있음`);
     
-    // 다양한 제스처 패턴 감지
+    // 터치 감지 - 손가락 끝이 화면 중앙에 가까운지 확인
+    const isTouching = detectTouch(landmarks);
+    
+    // 다양한 제스처 패턴 감지 (더 정확한 매칭)
     const patterns = {
       // 한 손가락 제스처들
       index_only: [false, true, false, false, false], // 검지만
@@ -456,8 +471,8 @@ function App() {
       pinky_only: [false, false, false, false, true], // 새끼만
       thumb_only: [true, false, false, false, false], // 엄지만
       
-      // 두 손가락 제스처들
-      index_middle: [false, true, true, false, false], // 검지+중지
+      // 두 손가락 제스처들 (주요 개선 대상)
+      index_middle: [false, true, true, false, false], // 검지+중지 (평화)
       index_ring: [false, true, false, true, false], // 검지+약지
       index_pinky: [false, true, false, false, true], // 검지+새끼
       middle_ring: [false, false, true, true, false], // 중지+약지
@@ -471,15 +486,18 @@ function App() {
       four: [false, true, true, true, true], // 검지+중지+약지+새끼
     };
     
-    // 제스처 패턴 매칭 (더 유연한 매칭)
+    // 제스처 패턴 매칭 (더 정확한 매칭)
     for (const [gesture, pattern] of Object.entries(patterns)) {
       const matchCount = fingerStates.filter((state, i) => state === pattern[i]).length;
       const requiredMatches = pattern.filter(Boolean).length;
       const totalMatches = fingerStates.filter(Boolean).length;
       
-      // 주요 손가락들이 일치하고 총 펴진 손가락 수가 비슷하면 매칭
-      if (matchCount >= Math.max(requiredMatches - 1, 1) && 
-          Math.abs(totalMatches - requiredMatches) <= 1) {
+      // 주요 손가락들이 일치하고 총 펴진 손가락 수가 정확히 일치하면 매칭
+      if (matchCount === requiredMatches && totalMatches === requiredMatches) {
+        // 터치 상태와 결합하여 최종 제스처 결정
+        if (isTouching && (gesture === 'index_middle' || gesture === 'peace')) {
+          return 'two_finger_touch'; // 두 손가락 터치
+        }
         return gesture;
       }
     }
@@ -489,26 +507,50 @@ function App() {
       return 'open_palm'; // 손바닥 펴기
     } else if (openFingers === 0) {
       return 'closed'; // 손 접기
-    } else {
-      // 부분적 상태에서도 간단한 제스처 감지
-      if (openFingers === 1) {
-        // 한 손가락만 펴진 경우
-        for (let i = 0; i < 5; i++) {
-          if (fingerStates[i]) {
-            return `${['thumb', 'index', 'middle', 'ring', 'pinky'][i]}_only`;
-          }
-        }
-      } else if (openFingers === 2) {
-        // 두 손가락이 펴진 경우 - 가장 간단한 조합들
-        if (fingerStates[1] && fingerStates[2]) return 'index_middle';
-        if (fingerStates[1] && fingerStates[3]) return 'index_ring';
-        if (fingerStates[1] && fingerStates[4]) return 'index_pinky';
-        if (fingerStates[2] && fingerStates[3]) return 'middle_ring';
-        if (fingerStates[2] && fingerStates[4]) return 'middle_pinky';
-        if (fingerStates[3] && fingerStates[4]) return 'ring_pinky';
+    } else if (openFingers === 2) {
+      // 두 손가락이 펴진 경우 - 가장 간단한 조합들
+      if (fingerStates[1] && fingerStates[2]) {
+        return isTouching ? 'two_finger_touch' : 'index_middle';
       }
-      return 'partial'; // 부분적
+      if (fingerStates[1] && fingerStates[3]) return 'index_ring';
+      if (fingerStates[1] && fingerStates[4]) return 'index_pinky';
+      if (fingerStates[2] && fingerStates[3]) return 'middle_ring';
+      if (fingerStates[2] && fingerStates[4]) return 'middle_pinky';
+      if (fingerStates[3] && fingerStates[4]) return 'ring_pinky';
+    } else if (openFingers === 1) {
+      // 한 손가락만 펴진 경우
+      for (let i = 0; i < 5; i++) {
+        if (fingerStates[i]) {
+          return `${['thumb', 'index', 'middle', 'ring', 'pinky'][i]}_only`;
+        }
+      }
     }
+    
+    return 'partial'; // 부분적
+  };
+
+  // 터치 감지 - 손가락 끝이 화면 중앙에 가까운지 확인
+  const detectTouch = (landmarks) => {
+    // 검지와 중지 손가락 끝의 위치 확인
+    const indexTip = landmarks[8]; // 검지 끝
+    const middleTip = landmarks[12]; // 중지 끝
+    
+    // 손가락 끝이 화면 중앙 영역에 있는지 확인 (y 좌표가 0.3~0.7 범위)
+    const isInCenterY = (indexTip.y >= 0.3 && indexTip.y <= 0.7) && 
+                       (middleTip.y >= 0.3 && middleTip.y <= 0.7);
+    
+    // 손가락이 충분히 펴져있는지 확인
+    const indexExtended = indexTip.y < landmarks[6].y + 0.02; // 검지 중간 관절보다 위
+    const middleExtended = middleTip.y < landmarks[10].y + 0.02; // 중지 중간 관절보다 위
+    
+    // 터치 조건: 중앙 영역에 있고, 두 손가락이 펴져있음
+    const isTouching = isInCenterY && indexExtended && middleExtended;
+    
+    if (isTouching) {
+      console.log("터치 감지됨! 두 손가락이 화면 중앙에 펴져있음");
+    }
+    
+    return isTouching;
   };
 
 
@@ -541,6 +583,12 @@ function App() {
         break;
       case "up":
         window.scrollBy({ top: -500, behavior: "smooth" });
+        break;
+        
+      // 두 손가락 터치 제스처 (새로 추가)
+      case "two_finger_touch":
+        window.scrollBy({ top: 400, behavior: "smooth" });
+        console.log("두 손가락 터치 감지! 아래로 스크롤");
         break;
         
       // 한 손가락 제스처들
@@ -846,7 +894,10 @@ function App() {
               {/* 손 인식 상태 표시 */}
               <div className="absolute top-2 right-2 bg-black bg-opacity-50 text-white px-2 py-1 rounded text-xs">
                 <div>손: {handDetected ? '✅' : '⏳'}</div>
-                <div>제스처: {handGesture === 'up' ? '⬆️ 위로' : handGesture === 'down' ? '⬇️ 아래로' : handGesture === 'center' ? '➡️ 정면' : '⏸️ 없음'}</div>
+                <div>제스처: {handGesture === 'up' ? '⬆️ 위로' : 
+                               handGesture === 'down' ? '⬇️ 아래로' : 
+                               handGesture === 'center' ? '➡️ 정면' : 
+                               handGesture === 'two_finger_touch' ? '✌️ 두손가락 터치' : '⏸️ 없음'}</div>
               </div>
               
               {/* 스크롤 방향 표시 */}
@@ -882,6 +933,7 @@ function App() {
                   {handGesture === 'up' && '⬆️ 위로 (손 접힘)'}
                   {handGesture === 'down' && '⬇️ 아래로 (손 펴짐)'}
                   {handGesture === 'center' && '➡️ 정면 (손 펴짐)'}
+                  {handGesture === 'two_finger_touch' && '✌️ 두손가락 터치'}
                   {handGesture === 'index_up' && '👆 한손가락 위로 (700px)'}
                   {handGesture === 'index_down' && '👆 한손가락 아래로 (600px)'}
                   {handGesture === 'index_center' && '👆 한손가락 아래로 (600px)'}
@@ -1019,6 +1071,7 @@ function App() {
                   {handGesture === 'up' ? '⬆️ 위로 (손 접힘)' : 
                    handGesture === 'down' ? '⬇️ 아래로 (손 펴짐)' : 
                    handGesture === 'center' ? '➡️ 정면 (손 펴짐)' : 
+                   handGesture === 'two_finger_touch' ? '✌️ 두손가락 터치' :
                    handGesture === 'index_fast_down' ? '👆 검지-빠른 아래' :
                    handGesture === 'middle_up' ? '👆 중지-위로' :
                    handGesture === 'ring_down' ? '👆 약지-아래로' :
@@ -1042,6 +1095,7 @@ function App() {
                 <div className="absolute bottom-2 left-2 bg-black bg-opacity-70 text-white px-2 py-1 rounded text-xs">
                   {scrollDirection === 'down' && '⬇️ 아래로 스크롤 (300px)'}
                   {scrollDirection === 'up' && '⬆️ 위로 스크롤 (500px)'}
+                  {scrollDirection === 'two_finger_touch' && '✌️ 두손가락 터치-아래로 (400px)'}
                   {scrollDirection === 'index_fast_down' && '👆 검지-빠른 아래 (600px)'}
                   {scrollDirection === 'middle_up' && '👆 중지-위로 (400px)'}
                   {scrollDirection === 'ring_down' && '👆 약지-아래로 (500px)'}
