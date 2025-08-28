@@ -3,14 +3,24 @@
   "name": "손 제스처 스크롤 컨트롤러",
   "version": "1.0.0",
   "description": "손 제스처로 모든 브라우저 탭의 스크롤을 제어하세요",
-  "permissions": ["activeTab", "tabs", "scripting", "camera"],
+  "permissions": ["activeTab", "tabs", "scripting"],
+  "optional_permissions": ["camera"],
   "host_permissions": ["<all_urls>"],
   "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; object-src 'self'"
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   },
   "web_accessible_resources": [
     {
-      "resources": ["help.html", "help.js", "icons/*"],
+      "resources": [
+        "help.html",
+        "help.js",
+        "icons/*",
+        "gesture-manager.js",
+        "plugin-manager.js",
+        "settings-manager.js",
+        "gesture-examples.json",
+        "plugin-examples.json"
+      ],
       "matches": ["<all_urls>"]
     }
   ],
