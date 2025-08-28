@@ -214,7 +214,7 @@ function App() {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           width: 640,
-          height: 480,
+          height: 360,
           facingMode: "user",
           frameRate: { ideal: 30 },
         },

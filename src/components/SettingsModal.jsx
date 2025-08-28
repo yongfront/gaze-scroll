@@ -16,7 +16,7 @@ const SettingsModal = ({ isOpen, onClose, settings, onSettingsChange }) => {
   const handleReset = () => {
     setLocalSettings({
       sensitivity: 20,
-      scrollSpeed: 50,
+      scrollSpeed: 150, // 기본값을 150으로 증가
       showCameraView: true,
       autoScroll: true
     });
