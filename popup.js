@@ -30,7 +30,7 @@ document.addEventListener('DOMContentLoaded', function() {
   const scrollDirection = document.getElementById('scrollDirection');
   const acceleration = document.getElementById('acceleration');
   // 줌 기능 제거됨 - 1배율 고정
-  const mirrorMode = document.getElementById('mirrorMode');
+  // mirrorMode 제거됨 - 항상 반전 모드로 고정
   const recenterEyes = document.getElementById('recenterEyes');
   const eyeTrackingStatus = document.getElementById('eyeTrackingStatus');
   const calibrationProgress = document.getElementById('calibrationProgress');
@@ -201,11 +201,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // 줌 기능 제거됨
 
-  // 좌우 반전 모드 이벤트
-  mirrorMode.addEventListener('change', function() {
-    saveSettings();
-    updateMirrorMode();
-  });
+  // 좌우 반전 모드 이벤트 제거됨 - 항상 반전 모드로 고정
 
   // 눈 중앙 맞추기 버튼 이벤트
   recenterEyes.addEventListener('click', function() {
@@ -305,9 +301,9 @@ document.addEventListener('DOMContentLoaded', function() {
     return {
       scrollSpeed: parseInt(scrollSpeed.value),
       topZone: parseInt(topZone.value),
-      bottomZone: parseInt(bottomZone.value),
+      bottomZone: parseInt(bottomZone.value)
       // debugMode 제거됨 - 항상 디버그 모드로 작동
-      mirrorMode: mirrorMode.checked
+      // mirrorMode 제거됨 - 항상 반전 모드로 고정
       // zoomLevel 제거됨 - 1배율 고정
     };
   }
@@ -327,33 +323,18 @@ document.addEventListener('DOMContentLoaded', function() {
         topZone.value = settings.topZone || 30;
         bottomZone.value = settings.bottomZone || 30;
         // debugMode 체크 박스 제거됨 - 항상 디버그 모드로 작동
-        mirrorMode.checked = settings.mirrorMode || false;
+        // mirrorMode 제거됨 - 항상 반전 모드로 고정
         // zoomLevel 제거됨 - 1배율 고정
 
         // 카메라 패널 항상 표시 (디버그 모드와 관계없이)
         debugPanelContainer.style.display = 'flex';
         debugPanel.style.display = 'block';
         setupDebugVideo();
-
-        // 좌우 반전 모드 적용
-        updateMirrorMode();
       }
     });
   }
 
-  function updateMirrorMode() {
-    // content script에 좌우 반전 모드 전달
-    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-      chrome.tabs.sendMessage(tabs[0].id, {
-        action: 'setMirrorMode',
-        enabled: mirrorMode.checked
-      }, function(response) {
-        if (chrome.runtime.lastError) {
-          console.error('좌우 반전 모드 설정 오류:', chrome.runtime.lastError);
-        }
-      });
-    });
-  }
+  // updateMirrorMode 함수 제거됨 - 항상 반전 모드로 고정
 
   function recenterEyeTracking() {
     // 눈 중앙 맞추기 요청

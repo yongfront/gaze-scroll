@@ -12,8 +12,8 @@ class GazeScroll {
       scrollSpeed: 50,
       topZone: 30,
       bottomZone: 30,
-      debugMode: false,
-      mirrorMode: false
+      debugMode: false
+      // mirrorMode 제거됨 - 항상 반전 모드로 고정
       // zoomLevel 제거됨 - 1배율 고정
     };
 
@@ -146,8 +146,8 @@ class GazeScroll {
           systemStatus: {
             isActive: true,
             isCalibrating: false,
-            debugMode: true,
-            mirrorMode: this.settings.mirrorMode
+            debugMode: true
+            // mirrorMode 제거됨 - 항상 반전 모드로 고정
           }
         };
 
@@ -182,18 +182,11 @@ class GazeScroll {
     }
   }
 
-  setMirrorMode(enabled) {
-    this.settings.mirrorMode = enabled;
-    this.applyMirrorMode();
-  }
-
+  // 반전 모드 해제 - 정상 상태로 고정
   applyMirrorMode() {
     if (this.video) {
-      if (this.settings.mirrorMode) {
-        this.video.style.transform = 'scaleX(-1)';
-      } else {
-        this.video.style.transform = 'scaleX(1)';
-      }
+      // 정상 상태 (반전 없음)
+      this.video.style.transform = 'scaleX(1)';
     }
   }
 
@@ -276,10 +269,7 @@ class GazeScroll {
         sendResponse({ success: true });
         break;
 
-      case 'setMirrorMode':
-        this.setMirrorMode(message.enabled);
-        sendResponse({ success: true });
-        break;
+      // setMirrorMode 케이스 제거됨 - 항상 반전 모드로 고정
 
       case 'recenterEyes':
         this.recenterEyes();
@@ -816,13 +806,13 @@ class GazeScroll {
         const g = data[idx + 1];
         const b = data[idx + 2];
 
-        // 더 넓은 범위의 피부톤 감지 (어두운 환경 지원)
+        // 매우 관대한 피부톤 감지 (다양한 환경과 피부톤 지원)
         const brightness = (r + g + b) / 3;
-        const isSkin = (brightness > 30 && r > 25 && g > 20 && b > 10) && // 최소 밝기 (더 낮음)
-                      (r > g * 0.7 && r > b * 0.7) && // 붉은 톤이 어느 정도 있음 (완화)
-                      (Math.abs(r - g) < 100 && Math.abs(r - b) < 100) && // 채도 범위 넓힘
-                      (r / Math.max(g, b) < 4.0) && // 색상 비율 완화
-                      (brightness < 220); // 너무 밝지 않음
+        const isSkin = (brightness > 15 && r > 10 && g > 8 && b > 5) && // 매우 낮은 최소 밝기
+                      (r >= g * 0.5 && r >= b * 0.5) && // 붉은 톤 조건 완화
+                      (Math.abs(r - g) < 120 && Math.abs(r - b) < 120) && // 채도 범위 더 넓힘
+                      (r / Math.max(g, b, 1) < 6.0) && // 색상 비율 더 완화 (0으로 나누기 방지)
+                      (brightness < 240); // 밝기 범위 확대
 
         skinMap[y * width + x] = isSkin ? 1 : 0;
 
@@ -834,7 +824,14 @@ class GazeScroll {
       }
     }
 
-    if (skinPixels > (width * height) / (step * step * 200)) { // 최소 피부톤 픽셀 수 (매우 낮은 임계값)
+    const totalSamples = (width * height) / (step * step);
+    const minRequired = totalSamples / 500;
+    const skinPercentage = (skinPixels / totalSamples) * 100;
+
+    // 디버그 로깅
+    console.log(`얼굴감지: 피부톤픽셀=${skinPixels}, 전체샘플=${totalSamples}, 비율=${skinPercentage.toFixed(2)}%, 필요최소=${minRequired.toFixed(0)}`);
+
+    if (skinPixels > minRequired) { // 최소 피부톤 픽셀 수 (극도로 낮은 임계값)
       centerX /= skinPixels;
       centerY /= skinPixels;
 
@@ -847,13 +844,17 @@ class GazeScroll {
         height: Math.min(height - (centerY - faceSize / 2), faceSize),
         skinMap: skinMap, // 디버그용 피부톤 맵 추가
         skinPixels: skinPixels,
-        totalSamples: (width * height) / (step * step)
+        totalSamples: totalSamples
       };
 
+      console.log(`✅ 얼굴감지 성공: 중심(${centerX.toFixed(0)}, ${centerY.toFixed(0)}), 크기=${faceSize.toFixed(0)}px`);
       return faceRegion;
+    } else {
+      console.log(`❌ 얼굴감지 실패: 피부톤 픽셀 부족 (${skinPixels} < ${minRequired.toFixed(0)})`);
     }
 
     // 얼굴을 찾지 못한 경우 중앙 영역 반환 (fallback)
+    console.log(`🔄 Fallback: 중앙 영역 사용 (${Math.floor(width * 0.25)}, ${Math.floor(height * 0.25)}, ${Math.floor(width * 0.5)}x${Math.floor(height * 0.5)})`);
     return {
       x: Math.floor(width * 0.25),
       y: Math.floor(height * 0.25),
@@ -861,7 +862,7 @@ class GazeScroll {
       height: Math.floor(height * 0.5),
       skinMap: skinMap, // 디버그용 피부톤 맵 추가
       skinPixels: skinPixels,
-      totalSamples: (width * height) / (step * step)
+      totalSamples: totalSamples
     };
   }
 
@@ -901,8 +902,8 @@ class GazeScroll {
           const avgBrightness = this.getRegionBrightness(data, width, height,
             cellX, cellY, cellWidth, cellHeight);
 
-          // 어두운 영역을 눈 후보로 저장 (더 낮은 임계값으로 변경)
-          if (avgBrightness < 150) {
+          // 어두운 영역을 눈 후보로 저장 (매우 낮은 임계값으로 변경)
+          if (avgBrightness < 180) {
             darkRegions.push({
               x: cellX,
               y: cellY,
@@ -1108,8 +1109,8 @@ class GazeScroll {
       systemStatus: {
         isActive: this.isActive,
         isCalibrating: this.isCalibrating,
-        debugMode: this.settings.debugMode,
-        mirrorMode: this.settings.mirrorMode
+        debugMode: this.settings.debugMode
+        // mirrorMode 제거됨 - 항상 반전 모드로 고정
       }
     };
 
@@ -1246,22 +1247,25 @@ class GazeScroll {
 
 
   showNotification(message, type = 'info') {
-    // 간단한 알림 표시
+    // 스크롤에 관계없이 항상 보이는 고정 위치 알림
     const notification = document.createElement('div');
     notification.style.cssText = `
-      position: fixed;
-      top: 20px;
-      right: 20px;
+      position: fixed !important;
+      top: 20px !important;
+      right: 20px !important;
       padding: 15px 20px;
       background: ${type === 'error' ? '#ff4757' : type === 'success' ? '#2ed573' : '#3742fa'};
       color: white;
       border-radius: 8px;
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-      z-index: 10000;
+      z-index: 999999 !important;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       font-size: 14px;
       max-width: 300px;
+      min-width: 250px;
       animation: slideIn 0.3s ease-out;
+      pointer-events: auto;
+      transform: translateZ(0);
     `;
 
     notification.innerHTML = `
