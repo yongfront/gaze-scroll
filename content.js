@@ -318,8 +318,8 @@ class GazeScroll {
             this.performScroll();
           }
 
-          // 디버그 모드에서 정보 전송
-          if (this.settings.debugMode) {
+          // 디버그 모드에서 정보 전송 (항상 전송해서 실시간 표시)
+          if (this.settings.debugMode || this.eyeTrackingState.isCalibrated) {
             this.sendDebugInfo(regions, currentBrightness, previousBrightness, gazeY, screenHeight, eyeRegions);
           }
 
@@ -389,8 +389,6 @@ class GazeScroll {
 
   // 눈 감지 및 추적 (개선된 알고리즘)
   detectAndTrackEyes(data, width, height) {
-    if (!this.settings.debugMode && !this.eyeTrackingState.isCalibrated) return null;
-
     // 1. 얼굴 영역 찾기
     const faceRegion = this.findFaceRegion(data, width, height);
 
@@ -1366,6 +1364,9 @@ class GazeScroll {
     // 눈 추적 품질 평가
     const eyeTrackingQuality = this.evaluateEyeTrackingQuality(eyeRegions);
 
+    // 현재 프레임에서 찾은 얼굴 영역 (디버그용)
+    const currentFaceRegion = this.findFaceRegion(this.ctx.getImageData(0, 0, 640, 480).data, 640, 480);
+
     // 디버그 데이터 구성
     const debugData = {
       gazePosition: gazePositionText,
@@ -1380,6 +1381,12 @@ class GazeScroll {
         center: (regions.center / 255).toFixed(3)
       },
       faceDetection: faceDetectionStatus,
+      currentFaceRegion: currentFaceRegion ? {
+        x: currentFaceRegion.x,
+        y: currentFaceRegion.y,
+        width: currentFaceRegion.width,
+        height: currentFaceRegion.height
+      } : null,
       eyeTracking: {
         quality: eyeTrackingQuality,
         isCalibrated: this.eyeTrackingState.isCalibrated,

@@ -387,9 +387,9 @@ document.addEventListener('DOMContentLoaded', function() {
       displayDebugFrame(data.frameImage);
     }
 
-    // 캔버스에 시선 방향 표시
+    // 캔버스에 시선 방향 및 얼굴/눈 영역 표시
     if (data.gazeX !== undefined && data.gazeY !== undefined) {
-      drawGazeIndicator(data.gazeX, data.gazeY, data.eyeRegions);
+      drawGazeIndicator(data.gazeX, data.gazeY, data.eyeRegions, data.currentFaceRegion);
     }
   }
 
@@ -406,99 +406,190 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // 확대 기능 관련 함수들 제거됨 - 1배율 고정
 
-  function drawGazeIndicator(gazeX, gazeY, eyeRegions) {
+  function drawGazeIndicator(gazeX, gazeY, eyeRegions, faceRegion = null) {
     const ctx = debugCanvas.getContext('2d');
-    const centerX = debugCanvas.width / 2;
-    const centerY = debugCanvas.height / 2;
 
-    // 캔버스 클리어
-    ctx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
+    // 캔버스 클리어 (반투명하게 해서 영상이 보이도록)
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+    ctx.fillRect(0, 0, debugCanvas.width, debugCanvas.height);
 
-    // 눈 영역 표시 (디버그용)
-    if (eyeRegions && eyeRegions.leftEye && eyeRegions.leftEye.confidence > 0) {
-      const leftEye = eyeRegions.leftEye;
-      // 카메라 해상도에서 디버그 캔버스 해상도로 좌표 변환
-      const scaleX = debugCanvas.width / 640;
-      const scaleY = debugCanvas.height / 480;
+    // 카메라 해상도에서 디버그 캔버스 해상도로 좌표 변환 비율
+    const scaleX = debugCanvas.width / 640;
+    const scaleY = debugCanvas.height / 480;
 
-      // 왼쪽 눈 영역 표시
-      ctx.strokeStyle = '#00ff00';
+    // 얼굴 영역 표시 (얼굴을 찾았을 때)
+    if (faceRegion) {
+      const faceX = faceRegion.x * scaleX;
+      const faceY = faceRegion.y * scaleY;
+      const faceWidth = faceRegion.width * scaleX;
+      const faceHeight = faceRegion.height * scaleY;
+
+      // 얼굴 영역 윤곽선 (노란색)
+      ctx.strokeStyle = 'rgba(255, 255, 0, 0.8)';
       ctx.lineWidth = 2;
-      ctx.strokeRect(
-        leftEye.x * scaleX,
-        leftEye.y * scaleY,
-        leftEye.width * scaleX,
-        leftEye.height * scaleY
-      );
+      ctx.strokeRect(faceX, faceY, faceWidth, faceHeight);
 
-      // 왼쪽 눈 텍스트
-      ctx.fillStyle = '#00ff00';
-      ctx.font = '10px monospace';
-      ctx.fillText(
-        `L:${leftEye.confidence.toFixed(2)}`,
-        leftEye.x * scaleX,
-        leftEye.y * scaleY - 5
-      );
+      // 얼굴 영역 라벨
+      ctx.fillStyle = '#ffff00';
+      ctx.font = '10px Arial';
+      ctx.fillText('얼굴', faceX, faceY - 5);
     }
 
-    if (eyeRegions && eyeRegions.rightEye && eyeRegions.rightEye.confidence > 0) {
-      const rightEye = eyeRegions.rightEye;
-      const scaleX = debugCanvas.width / 640;
-      const scaleY = debugCanvas.height / 480;
+    // 얼굴 영역 표시 (얼굴을 찾았을 때만)
+    if (eyeRegions && (eyeRegions.leftEye || eyeRegions.rightEye)) {
+      // 왼쪽 눈 영역 표시
+      if (eyeRegions.leftEye && eyeRegions.leftEye.confidence > 0.2) {
+        const leftEye = eyeRegions.leftEye;
+        const eyeX = leftEye.x * scaleX;
+        const eyeY = leftEye.y * scaleY;
+        const eyeWidth = leftEye.width * scaleX;
+        const eyeHeight = leftEye.height * scaleY;
+
+        // 눈 영역 사각형 (녹색, 신뢰도에 따라 투명도 조절)
+        const alpha = Math.max(0.3, leftEye.confidence);
+        ctx.strokeStyle = `rgba(0, 255, 0, ${alpha})`;
+        ctx.lineWidth = 3;
+        ctx.strokeRect(eyeX, eyeY, eyeWidth, eyeHeight);
+
+        // 눈 영역 채우기 (반투명)
+        ctx.fillStyle = `rgba(0, 255, 0, ${alpha * 0.2})`;
+        ctx.fillRect(eyeX, eyeY, eyeWidth, eyeHeight);
+
+        // 눈 중심점 표시 (크고 명확하게)
+        const centerX_eye = eyeX + eyeWidth / 2;
+        const centerY_eye = eyeY + eyeHeight / 2;
+        ctx.fillStyle = '#00ff00';
+        ctx.beginPath();
+        ctx.arc(centerX_eye, centerY_eye, 5, 0, 2 * Math.PI);
+        ctx.fill();
+
+        // 눈 중심에 십자가 표시
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(centerX_eye - 8, centerY_eye);
+        ctx.lineTo(centerX_eye + 8, centerY_eye);
+        ctx.moveTo(centerX_eye, centerY_eye - 8);
+        ctx.lineTo(centerX_eye, centerY_eye + 8);
+        ctx.stroke();
+
+        // 신뢰도 표시
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '10px monospace';
+        ctx.fillText(`${(leftEye.confidence * 100).toFixed(0)}%`, eyeX, eyeY - 5);
+      }
 
       // 오른쪽 눈 영역 표시
-      ctx.strokeStyle = '#00ff00';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(
-        rightEye.x * scaleX,
-        rightEye.y * scaleY,
-        rightEye.width * scaleX,
-        rightEye.height * scaleY
-      );
+      if (eyeRegions.rightEye && eyeRegions.rightEye.confidence > 0.2) {
+        const rightEye = eyeRegions.rightEye;
+        const eyeX = rightEye.x * scaleX;
+        const eyeY = rightEye.y * scaleY;
+        const eyeWidth = rightEye.width * scaleX;
+        const eyeHeight = rightEye.height * scaleY;
 
-      // 오른쪽 눈 텍스트
-      ctx.fillStyle = '#00ff00';
-      ctx.font = '10px monospace';
-      ctx.fillText(
-        `R:${rightEye.confidence.toFixed(2)}`,
-        rightEye.x * scaleX,
-        rightEye.y * scaleY - 5
-      );
+        // 눈 영역 사각형 (파란색, 신뢰도에 따라 투명도 조절)
+        const alpha = Math.max(0.3, rightEye.confidence);
+        ctx.strokeStyle = `rgba(0, 128, 255, ${alpha})`;
+        ctx.lineWidth = 3;
+        ctx.strokeRect(eyeX, eyeY, eyeWidth, eyeHeight);
+
+        // 눈 영역 채우기 (반투명)
+        ctx.fillStyle = `rgba(0, 128, 255, ${alpha * 0.2})`;
+        ctx.fillRect(eyeX, eyeY, eyeWidth, eyeHeight);
+
+        // 눈 중심점 표시 (크고 명확하게)
+        const centerX_eye = eyeX + eyeWidth / 2;
+        const centerY_eye = eyeY + eyeHeight / 2;
+        ctx.fillStyle = '#0080ff';
+        ctx.beginPath();
+        ctx.arc(centerX_eye, centerY_eye, 5, 0, 2 * Math.PI);
+        ctx.fill();
+
+        // 눈 중심에 십자가 표시
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(centerX_eye - 8, centerY_eye);
+        ctx.lineTo(centerX_eye + 8, centerY_eye);
+        ctx.moveTo(centerX_eye, centerY_eye - 8);
+        ctx.lineTo(centerX_eye, centerY_eye + 8);
+        ctx.stroke();
+
+        // 신뢰도 표시
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '10px monospace';
+        ctx.fillText(`${(rightEye.confidence * 100).toFixed(0)}%`, eyeX, eyeY - 5);
+      }
+
+      // 두 눈 사이에 선 연결 (눈 추적 상태 시각화)
+      if (eyeRegions.leftEye && eyeRegions.rightEye &&
+          eyeRegions.leftEye.confidence > 0.2 && eyeRegions.rightEye.confidence > 0.2) {
+
+        const leftCenterX = (eyeRegions.leftEye.x + eyeRegions.leftEye.width / 2) * scaleX;
+        const leftCenterY = (eyeRegions.leftEye.y + eyeRegions.leftEye.height / 2) * scaleY;
+        const rightCenterX = (eyeRegions.rightEye.x + eyeRegions.rightEye.width / 2) * scaleX;
+        const rightCenterY = (eyeRegions.rightEye.y + eyeRegions.rightEye.height / 2) * scaleY;
+
+        ctx.strokeStyle = '#ffff00';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 5]);
+        ctx.beginPath();
+        ctx.moveTo(leftCenterX, leftCenterY);
+        ctx.lineTo(rightCenterX, rightCenterY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    } else {
+      // 눈을 찾지 못했을 때 메시지 표시
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+      ctx.font = '14px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('눈을 찾는 중...', debugCanvas.width / 2, debugCanvas.height / 2);
+      ctx.textAlign = 'left';
     }
 
-    // 시선 방향 선 그리기
-    ctx.strokeStyle = '#ff6b6b';
-    ctx.lineWidth = 3;
-    ctx.lineCap = 'round';
+    // 시선 방향 표시 (눈 추적이 활성화되었을 때만)
+    if (gazeX !== undefined && gazeY !== undefined && eyeRegions &&
+        ((eyeRegions.leftEye && eyeRegions.leftEye.confidence > 0.2) ||
+         (eyeRegions.rightEye && eyeRegions.rightEye.confidence > 0.2))) {
 
-    ctx.beginPath();
-    ctx.moveTo(centerX, centerY);
-    ctx.lineTo(centerX + (gazeX - 0.5) * 100, centerY + (gazeY - 0.5) * 100);
-    ctx.stroke();
+      const gazeScreenX = gazeX * debugCanvas.width;
+      const gazeScreenY = gazeY * debugCanvas.height;
 
-    // 시선 위치 점 그리기
-    ctx.fillStyle = '#ff4757';
-    ctx.beginPath();
-    ctx.arc(centerX + (gazeX - 0.5) * 100, centerY + (gazeY - 0.5) * 100, 8, 0, 2 * Math.PI);
-    ctx.fill();
+      // 시선 방향 십자가 (크고 명확하게)
+      ctx.strokeStyle = '#ff4444';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(gazeScreenX - 20, gazeScreenY);
+      ctx.lineTo(gazeScreenX + 20, gazeScreenY);
+      ctx.moveTo(gazeScreenX, gazeScreenY - 20);
+      ctx.lineTo(gazeScreenX, gazeScreenY + 20);
+      ctx.stroke();
 
-    // 중앙 십자선 그리기
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(centerX - 20, centerY);
-    ctx.lineTo(centerX + 20, centerY);
-    ctx.moveTo(centerX, centerY - 20);
-    ctx.lineTo(centerX, centerY + 20);
-    ctx.stroke();
+      // 시선 방향 원형 표시
+      ctx.strokeStyle = '#ff4444';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(gazeScreenX, gazeScreenY, 15, 0, 2 * Math.PI);
+      ctx.stroke();
 
-    // 시선 방향 텍스트
+      // 시선 방향 텍스트
+      ctx.fillStyle = '#ff4444';
+      ctx.font = 'bold 12px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('👁️', gazeScreenX, gazeScreenY - 25);
+      ctx.textAlign = 'left';
+    }
+
+    // 디버그 정보 표시 (좌상단)
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(5, 5, 200, 60);
+
     ctx.fillStyle = '#ffffff';
-    ctx.font = '12px monospace';
-    ctx.textAlign = 'center';
-    const directionText = gazeY < 0.4 ? '위쪽' : gazeY > 0.6 ? '아래쪽' : '중앙';
-    ctx.fillText(directionText, centerX, centerY + 120);
-    ctx.textAlign = 'left';
+    ctx.font = '10px monospace';
+    ctx.fillText(`해상도: 640x480 (1배율)`, 10, 20);
+    ctx.fillText(`눈 추적: ${eyeRegions && (eyeRegions.leftEye || eyeRegions.rightEye) ? '활성' : '비활성'}`, 10, 35);
+    ctx.fillText(`시선: ${gazeX !== undefined ? `X:${(gazeX * 100).toFixed(1)}% Y:${(gazeY * 100).toFixed(1)}%` : '없음'}`, 10, 50);
   }
 
   function showError(message) {
