@@ -29,17 +29,38 @@ chrome.tabs.onUpdated.addListener(function(tabId, changeInfo, tab) {
 // content script로부터 디버그 메시지를 받아 popup으로 전달
 chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
   if (message.action === 'debugUpdate') {
-    // 모든 popup으로 디버그 정보 브로드캐스트
+    // 모든 popup으로 디버그 정보 브로드캐스트 (응답 대기 없이)
     try {
-      chrome.runtime.sendMessage(message, function(response) {
-        if (chrome.runtime.lastError) {
-          // popup이 닫혔거나 없는 경우
-          console.warn('디버그 정보 브로드캐스트 실패:', chrome.runtime.lastError.message);
+      chrome.runtime.sendMessage(message).catch((error) => {
+        // popup이 닫혔거나 없는 경우 무시 (정상적인 상황)
+        if (!error.message.includes('Receiving end does not exist')) {
+          console.warn('디버그 정보 브로드캐스트 실패:', error.message);
         }
       });
     } catch (error) {
       console.warn('디버그 메시지 브로드캐스트 중 오류:', error);
     }
+
+    // 즉시 응답 (메시지 채널 닫힘 방지)
+    sendResponse({ ok: true });
+    return false; // 동기 응답
   }
-  return true;
+  
+  // 다른 메시지 타입들도 즉시 응답
+  if (message.action === 'notify') {
+    try {
+      chrome.runtime.sendMessage(message).catch(() => {
+        // popup이 없어도 정상
+      });
+    } catch (error) {
+      console.warn('알림 메시지 브로드캐스트 중 오류:', error);
+    }
+    
+    sendResponse({ ok: true });
+    return false; // 동기 응답
+  }
+  
+  // 알 수 없는 메시지
+  sendResponse({ ok: false, error: 'Unknown message action' });
+  return false;
 });

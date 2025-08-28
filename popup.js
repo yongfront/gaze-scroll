@@ -1,4 +1,18 @@
 // Gaze Scroll Popup Script
+
+// 기존에 선언된 변수/함수들을 정리하여 중복 선언 방지
+(function() {
+  // 이미 선언된 전역 변수들을 정리
+  const globalVarsToClean = ['midaEventObserver', 'postIntegrationStatus'];
+
+  globalVarsToClean.forEach(varName => {
+    if (typeof window[varName] !== 'undefined') {
+      console.warn(`기존에 선언된 ${varName} 변수를 정리합니다.`);
+      delete window[varName];
+    }
+  });
+})();
+
 document.addEventListener('DOMContentLoaded', function() {
   const toggleBtn = document.getElementById('toggleBtn');
   const calibrateBtn = document.getElementById('calibrateBtn');
@@ -7,7 +21,7 @@ document.addEventListener('DOMContentLoaded', function() {
   const scrollSpeed = document.getElementById('scrollSpeed');
   const topZone = document.getElementById('topZone');
   const bottomZone = document.getElementById('bottomZone');
-  const debugMode = document.getElementById('debugMode');
+  // debugMode 체크 박스 제거됨 - 항상 디버그 모드로 작동
   const debugPanel = document.getElementById('debugPanel');
   const debugVideo = document.getElementById('debugVideo');
   const debugCanvas = document.getElementById('debugCanvas');
@@ -20,6 +34,7 @@ document.addEventListener('DOMContentLoaded', function() {
   const recenterEyes = document.getElementById('recenterEyes');
   const eyeTrackingStatus = document.getElementById('eyeTrackingStatus');
   const calibrationProgress = document.getElementById('calibrationProgress');
+  const debugPanelContainer = document.getElementById('debugPanelContainer');
 
   // 새로운 디버그 요소들
   const faceDetectionStatus = document.getElementById('faceDetectionStatus');
@@ -36,15 +51,140 @@ document.addEventListener('DOMContentLoaded', function() {
   // 저장된 설정 불러오기
   loadSettings();
 
+  // 디버그 모드를 항상 활성화로 설정
+  setTimeout(() => {
+    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+      chrome.tabs.sendMessage(tabs[0].id, {
+        action: 'setDebugMode',
+        enabled: true
+      }, function(response) {
+        if (chrome.runtime.lastError) {
+          console.error('디버그 모드 강제 활성화 오류:', chrome.runtime.lastError);
+        } else {
+          console.log('✅ 디버그 모드 강제 활성화됨');
+        }
+      });
+    });
+  }, 500);
+
+  // 팝업에서는 카메라를 직접 열지 않고, Content Script에서 전달되는 프레임만 표시
+  // 초기에는 로딩 메시지만 표시
+  setTimeout(() => {
+    const loadingElement = document.getElementById('cameraLoading');
+    if (loadingElement) {
+      loadingElement.innerHTML = '📷 카메라 연결 확인중...';
+      loadingElement.style.display = 'block';
+      loadingElement.style.color = 'rgba(255,255,255,0.9)';
+    }
+  }, 500);
+
+  // 카메라 상태 확인 요청
+  setTimeout(() => {
+    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+      chrome.tabs.sendMessage(tabs[0].id, {
+        action: 'getStatus'
+      }, function(response) {
+        if (chrome.runtime.lastError) {
+          console.warn('카메라 상태 확인 실패:', chrome.runtime.lastError);
+          const loadingElement = document.getElementById('cameraLoading');
+          if (loadingElement) {
+            loadingElement.innerHTML = '⚠️ 페이지를 새로고침 후 시도해주세요';
+            loadingElement.style.color = 'rgba(255,200,100,0.9)';
+          }
+        } else if (response && response.isActive) {
+          console.log('카메라가 이미 활성화되어 있음');
+          const loadingElement = document.getElementById('cameraLoading');
+          if (loadingElement) {
+            loadingElement.innerHTML = '📷 프레임 수신 대기중...';
+          }
+        }
+      });
+    });
+  }, 1000);
+
+  // 확장 프로그램 연결 상태 모니터링
+  let lastMessageTime = Date.now();
+  let connectionLost = false;
+
+  // 주기적으로 연결 상태 확인
+  setInterval(() => {
+    const currentTime = Date.now();
+    const timeSinceLastMessage = currentTime - lastMessageTime;
+
+    // 5초 이상 메시지가 오지 않으면 연결이 끊어졌다고 판단 (더 빠른 감지)
+    if (timeSinceLastMessage > 5000 && !connectionLost) {
+      connectionLost = true;
+      console.warn('Content Script과의 연결이 끊어졌습니다.');
+      
+      const loadingElement = document.getElementById('cameraLoading');
+      if (loadingElement) {
+        loadingElement.innerHTML = '🔄 연결 재시도 중... 카메라를 시작해주세요';
+        loadingElement.style.color = 'rgba(255,200,100,0.9)';
+        loadingElement.style.display = 'block';
+      }
+      
+      showTopNotification('🔄 연결 복원 시도 중... 시선 추적을 다시 시작해주세요.', 4000);
+    }
+  }, 5000);
+
+  // 메시지 수신 시 마지막 메시지 시간 업데이트
+  chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
+    if (message.action === 'debugUpdate') {
+      lastMessageTime = Date.now();
+      if (connectionLost) {
+        connectionLost = false;
+        console.log('Content Script과의 연결이 복원되었습니다.');
+        showTopNotification('✅ 연결이 복원되었습니다!', 2000);
+      }
+      updateDebugInfo(message.data);
+      
+      // 즉시 동기 응답 (메시지 채널 닫힘 방지)
+      if (sendResponse) {
+        sendResponse({ ok: true });
+      }
+      return false; // 동기 응답
+    } else if (message.action === 'notify') {
+      // Content Script에서 온 알림을 팝업 상단 알림으로 통일해서 표시
+      try {
+        const duration = typeof message.duration === 'number' ? message.duration : 3000;
+        if (typeof window.showTopNotification === 'function') {
+          window.showTopNotification(message.message || '', duration);
+        }
+        
+        if (sendResponse) {
+          sendResponse({ ok: true });
+        }
+        return false; // 동기 응답
+      } catch (e) {
+        console.error('notify 처리 중 오류:', e);
+        if (sendResponse) {
+          sendResponse({ ok: false, error: String(e) });
+        }
+        return false; // 동기 응답
+      }
+    }
+    
+    // 알 수 없는 메시지 타입
+    if (sendResponse) {
+      sendResponse({ ok: false, error: 'Unknown message type' });
+    }
+    return false; // 동기 응답
+  });
+
   // 토글 버튼 이벤트
   toggleBtn.addEventListener('click', function() {
     isActive = !isActive;
 
-    if (isActive) {
-      startGazeTracking();
-    } else {
-      stopGazeTracking();
-    }
+          if (isActive) {
+        startGazeTracking();
+        // 시선 추적 시작 시 최상단 알림 표시
+        setTimeout(() => {
+          showTopNotification('👁️ 시선 추적이 시작되었습니다! 이제 눈을 움직여서 스크롤해보세요.', 4000);
+        }, 1000);
+      } else {
+        stopGazeTracking();
+        showTopNotification('⏸️ 시선 추적이 중지되었습니다.', 2000);
+      }
   });
 
   // 보정 버튼 이벤트
@@ -57,10 +197,7 @@ document.addEventListener('DOMContentLoaded', function() {
     input.addEventListener('change', saveSettings);
   });
 
-  debugMode.addEventListener('change', function() {
-    saveSettings();
-    toggleDebugMode();
-  });
+  // debugMode 이벤트 리스너 제거됨 - 항상 디버그 모드로 작동
 
   // 줌 기능 제거됨
 
@@ -74,6 +211,30 @@ document.addEventListener('DOMContentLoaded', function() {
   recenterEyes.addEventListener('click', function() {
     recenterEyeTracking();
   });
+
+  // 상단 알림 클릭으로 닫기 (CSP 인라인 제거 대응)
+  const topNotificationEl = document.getElementById('topNotification');
+  if (topNotificationEl) {
+    topNotificationEl.addEventListener('click', function() {
+      if (typeof window.hideTopNotification === 'function') window.hideTopNotification();
+    });
+  }
+
+  // 재시도 버튼 이벤트 바인딩 (CSP 인라인 제거 대응)
+  const retryBtnEl = document.getElementById('retryCameraBtn');
+  if (retryBtnEl) {
+    retryBtnEl.addEventListener('click', function() {
+      if (typeof window.retryCameraAccess === 'function') window.retryCameraAccess();
+    });
+    retryBtnEl.addEventListener('mouseenter', function() {
+      retryBtnEl.style.transform = 'translateX(-50%) translateY(-2px)';
+      retryBtnEl.style.boxShadow = '0 6px 25px rgba(52, 152, 219, 0.6)';
+    });
+    retryBtnEl.addEventListener('mouseleave', function() {
+      retryBtnEl.style.transform = 'translateX(-50%)';
+      retryBtnEl.style.boxShadow = '0 4px 15px rgba(0,0,0,0.3)';
+    });
+  }
 
   function startGazeTracking() {
     chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
@@ -145,7 +306,7 @@ document.addEventListener('DOMContentLoaded', function() {
       scrollSpeed: parseInt(scrollSpeed.value),
       topZone: parseInt(topZone.value),
       bottomZone: parseInt(bottomZone.value),
-      debugMode: debugMode.checked,
+      // debugMode 제거됨 - 항상 디버그 모드로 작동
       mirrorMode: mirrorMode.checked
       // zoomLevel 제거됨 - 1배율 고정
     };
@@ -165,15 +326,14 @@ document.addEventListener('DOMContentLoaded', function() {
         scrollSpeed.value = settings.scrollSpeed || 50;
         topZone.value = settings.topZone || 30;
         bottomZone.value = settings.bottomZone || 30;
-        debugMode.checked = settings.debugMode || false;
+        // debugMode 체크 박스 제거됨 - 항상 디버그 모드로 작동
         mirrorMode.checked = settings.mirrorMode || false;
         // zoomLevel 제거됨 - 1배율 고정
 
-        // 디버그 모드 초기 상태 설정
-        if (settings.debugMode) {
-          debugPanel.style.display = 'block';
-          setupDebugVideo();
-        }
+        // 카메라 패널 항상 표시 (디버그 모드와 관계없이)
+        debugPanelContainer.style.display = 'flex';
+        debugPanel.style.display = 'block';
+        setupDebugVideo();
 
         // 좌우 반전 모드 적용
         updateMirrorMode();
@@ -210,104 +370,335 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   }
 
-  function toggleDebugMode() {
-    const isDebugEnabled = debugMode.checked;
-
-    if (isDebugEnabled) {
-      debugPanel.style.display = 'block';
-      setupDebugVideo();
-
-      // 디버그 모드 활성화 안내
-      showDebugInfo('디버그 모드가 활성화되었습니다. 시선 추적이 시작되면 실시간으로 카메라 화면과 시선 정보를 확인할 수 있습니다.');
-
-      // 메인 시선 추적 상태 확인
-      chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-        chrome.tabs.sendMessage(tabs[0].id, {
-          action: 'getStatus'
-        }, function(response) {
-          if (chrome.runtime.lastError) {
-            console.error('상태 확인 메시지 전송 오류:', chrome.runtime.lastError);
-            showDebugInfo('메시지 전송에 실패했습니다. 페이지를 새로고침한 후 다시 시도해주세요.');
-            return;
-          }
-
-          if (!response || !response.isActive) {
-            showDebugInfo('먼저 "시선 추적 시작" 버튼을 클릭하여 메인 기능을 활성화해주세요. 디버그 모드는 메인 기능과 함께 작동합니다.');
-          }
-        });
-      });
-    } else {
-      debugPanel.style.display = 'none';
-      stopDebugVideo();
-    }
-
-    // content script에 디버그 모드 상태 전달
-    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-      chrome.tabs.sendMessage(tabs[0].id, {
-        action: 'setDebugMode',
-        enabled: isDebugEnabled
-      }, function(response) {
-        if (chrome.runtime.lastError) {
-          console.error('디버그 모드 설정 메시지 전송 오류:', chrome.runtime.lastError);
-        }
-      });
+  // toggleDebugMode 함수 제거됨 - 항상 디버그 모드로 작동
+  // Content Script에 디버그 모드 상태 전달 (항상 활성화)
+  chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+    chrome.tabs.sendMessage(tabs[0].id, {
+      action: 'setDebugMode',
+      enabled: true
+    }, function(response) {
+      if (chrome.runtime.lastError) {
+        console.error('디버그 모드 설정 메시지 전송 오류:', chrome.runtime.lastError);
+      }
     });
-  }
+  });
 
   function showDebugInfo(message) {
-    const debugContent = document.querySelector('.debug-content');
-    if (debugContent) {
-      debugContent.innerHTML = `
-        <div style="width: 100%; text-align: center; color: #74b9ff; padding: 20px;">
-          <div style="font-size: 16px; margin-bottom: 10px;">🔍 디버그 모드 준비</div>
-          <div style="font-size: 12px; color: rgba(255, 255, 255, 0.8);">${message}</div>
-          <div style="font-size: 11px; color: rgba(255, 255, 255, 0.6); margin-top: 10px;">
-            ※ 시선 추적을 시작하면 실시간 디버그 정보가 표시됩니다
-          </div>
-        </div>
-      `;
-    }
+    // 디버그 모드에서만 메시지 표시, 간단하게 표시
+    console.log('디버그 메시지:', message);
+    // 팝업 공간 절약을 위해 시각적 메시지는 생략
   }
 
   function setupDebugVideo() {
+    console.log('=== 카메라 초기화 시작 ===');
+
     // 디버그 캔버스 설정
-    const ctx = debugCanvas.getContext('2d');
-    debugCanvas.width = 320;
-    debugCanvas.height = 240;
+    if (debugCanvas) {
+      debugCanvas.width = 200;
+      debugCanvas.height = 150;
+      console.log('캔버스 설정 완료:', debugCanvas.width, 'x', debugCanvas.height);
+    } else {
+      console.error('debugCanvas 요소를 찾을 수 없습니다!');
+    }
 
-    // 디버그 정보 업데이트 리스너 등록
-    chrome.runtime.onMessage.addListener(function(message) {
-      if (message.action === 'debugUpdate') {
-        updateDebugInfo(message.data);
-      }
-    });
+    // 초기 로딩 메시지 표시
+    showDebugInfo('카메라를 초기화하는 중...');
 
-    console.log('디버그 모드 초기화 완료');
+    // 디버그 정보 업데이트는 전역 리스너에서 처리됨
+
+    // 팝업에서는 카메라를 직접 열지 않음. Content Script 프레임을 기다림
+    const loadingElement = document.getElementById('cameraLoading');
+    if (loadingElement) {
+      loadingElement.innerHTML = '📷 프레임 대기중...';
+      loadingElement.style.display = 'block';
+      loadingElement.style.color = 'rgba(255,255,255,0.9)';
+    }
+
+    console.log('카메라 스트림 초기화 완료');
+  }
+
+  function startCameraStream() {
+    // 더 이상 팝업에서 getUserMedia를 호출하지 않음
+    const loadingElement = document.getElementById('cameraLoading');
+    if (loadingElement) {
+      loadingElement.innerHTML = '📷 프레임 대기중...';
+      loadingElement.style.display = 'block';
+      loadingElement.style.color = 'rgba(255,255,255,0.9)';
+    }
+
+    // 컨테이너 스타일 기본값으로 복원
+    const cameraContainer = document.querySelector('.debug-video-container');
+    if (cameraContainer) {
+      cameraContainer.style.background = 'rgba(0, 0, 0, 0.5)';
+      cameraContainer.style.border = '1px solid rgba(255, 255, 255, 0.1)';
+    }
   }
 
   function showDebugError(message) {
-    // 디버그 패널에 오류 메시지 표시
-    const debugContent = document.querySelector('.debug-content');
-    if (debugContent) {
-      debugContent.innerHTML = `
-        <div style="width: 100%; text-align: center; color: #ff6b6b; padding: 20px;">
-          <div style="font-size: 16px; margin-bottom: 10px;">⚠️ 디버그 모드 오류</div>
-          <div style="font-size: 12px; color: rgba(255, 255, 255, 0.7);">${message}</div>
-          <div style="font-size: 11px; color: rgba(255, 255, 255, 0.5); margin-top: 10px;">
-            ※ 메인 시선 추적 기능은 정상 작동합니다
-          </div>
-        </div>
-      `;
+    // 카메라 오류는 콘솔에만 표시하고 팝업 공간 절약
+    console.error('카메라 오류:', message);
+    // 시각적 메시지는 표시하지 않음
+  }
+
+  function showRetryButton(message) {
+    console.log('🔄 재시도 버튼 표시:', message);
+
+    // 재시도 버튼만 표시 (메시지는 툴팁으로)
+    const retryBtn = document.getElementById('retryCameraBtn');
+    if (retryBtn) {
+      retryBtn.style.display = 'block';
+      retryBtn.title = message;
+
+      // 애니메이션 효과로 나타나기
+      setTimeout(() => {
+        retryBtn.style.opacity = '1';
+      }, 100);
+
+      console.log('✅ 재시도 버튼 표시됨');
+    } else {
+      console.error('❌ 재시도 버튼을 찾을 수 없습니다!');
     }
   }
 
+  // 디버깅용 함수들 - 이미 선언된 함수가 있으면 덮어쓰지 않도록 체크
+  // 먼저 기존 함수들을 안전하게 정리
+  const functionsToClean = [
+    'checkCameraStatus', 'forceHideLoading', 'testCameraDisplay', 'retryCameraAccess',
+    'showTopNotification', 'hideTopNotification', 'updateTopNotification',
+    'notifyGazeTrackingReady', 'notifyFaceDetected', 'notifyCalibrationComplete',
+    'notifyScrollDirection', 'showCameraPermissionGuide'
+  ];
+
+  functionsToClean.forEach(funcName => {
+    if (typeof window[funcName] !== 'undefined') {
+      console.log(`${funcName} 함수가 이미 존재합니다. 정리 후 재선언합니다.`);
+      delete window[funcName];
+    }
+  });
+
+  if (typeof window.checkCameraStatus === 'undefined') {
+    window.checkCameraStatus = function() {
+      const debugVideo = document.getElementById('debugVideo');
+      const loadingElement = document.getElementById('cameraLoading');
+
+      console.log('=== 카메라 상태 확인 ===');
+      console.log('debugVideo 존재:', !!debugVideo);
+      console.log('로딩 메시지 표시:', loadingElement ? loadingElement.style.display : '로딩 요소 없음');
+
+      if (debugVideo) {
+        console.log('비디오 상태:', {
+          videoWidth: debugVideo.videoWidth,
+          videoHeight: debugVideo.videoHeight,
+          readyState: debugVideo.readyState,
+          paused: debugVideo.paused,
+          currentTime: debugVideo.currentTime,
+          srcObject: debugVideo.srcObject ? '스트림 있음' : '스트림 없음',
+          style: {
+            display: debugVideo.style.display,
+            visibility: debugVideo.style.visibility,
+            opacity: debugVideo.style.opacity
+          }
+        });
+      }
+
+      return debugVideo;
+    };
+  }
+
+  if (typeof window.forceHideLoading === 'undefined') {
+    window.forceHideLoading = function() {
+      const loadingElement = document.getElementById('cameraLoading');
+      if (loadingElement) {
+        loadingElement.style.display = 'none';
+        console.log('로딩 메시지 강제 숨김');
+      }
+    };
+  }
+
+  if (typeof window.testCameraDisplay === 'undefined') {
+    window.testCameraDisplay = function() {
+      console.log('=== 카메라 표시 테스트 시작 ===');
+
+      // 로딩 메시지 숨기기
+      if (window.forceHideLoading) window.forceHideLoading();
+
+      // debugVideo 상태 확인
+      const debugVideo = window.checkCameraStatus ? window.checkCameraStatus() : null;
+
+      if (debugVideo && debugVideo.srcObject) {
+        console.log('카메라 스트림이 연결되어 있음');
+
+        // 비디오 재생 강제 시도
+        if (debugVideo.paused) {
+          debugVideo.play().then(() => {
+            console.log('비디오 재생 강제 시작됨');
+          }).catch(error => {
+            console.error('비디오 재생 실패:', error);
+          });
+        }
+
+        // 스타일 강제 설정
+        debugVideo.style.display = 'block';
+        debugVideo.style.visibility = 'visible';
+        debugVideo.style.opacity = '1';
+        debugVideo.style.zIndex = '10';
+
+        console.log('비디오 스타일 강제 적용됨');
+      } else {
+        console.log('카메라 스트림이 연결되어 있지 않음');
+      }
+
+      return debugVideo;
+    };
+  }
+
+  // 전역 함수로 재시도 함수 정의 - 중복 선언 방지
+  if (typeof window.retryCameraAccess === 'undefined') {
+    window.retryCameraAccess = function() {
+      console.log('🔄 카메라 재시도 요청됨');
+
+      // 먼저 카메라 권한 안내 표시
+      if (window.showCameraPermissionGuide) window.showCameraPermissionGuide();
+
+      const retryBtn = document.getElementById('retryCameraBtn');
+      if (retryBtn) {
+        // 애니메이션 효과로 사라지기
+        retryBtn.style.opacity = '0';
+        setTimeout(() => {
+          retryBtn.style.display = 'none';
+        }, 300);
+        console.log('재시도 버튼 숨김 처리됨');
+      }
+
+      // 로딩 메시지 초기화
+      const loadingElement = document.getElementById('cameraLoading');
+      if (loadingElement) {
+        loadingElement.innerHTML = '📹 권한 요청...';
+        loadingElement.style.color = 'rgba(255,255,255,0.7)';
+        loadingElement.style.display = 'block';
+      }
+
+      // 카메라 스트림 재시작 (약간 지연)
+      setTimeout(() => {
+        startCameraStream();
+      }, 2000); // 권한 안내를 읽을 시간을 줌
+    };
+  }
+
+  // 최상단 알림 메시지 제어 함수들 - 중복 선언 방지
+  if (typeof window.showTopNotification === 'undefined') {
+    window.showTopNotification = function(message, duration = 3000) {
+      const notification = document.getElementById('topNotification');
+      const textElement = document.getElementById('notificationText');
+
+      if (notification && textElement) {
+        textElement.textContent = message;
+        notification.style.display = 'block';
+
+        // 자동으로 사라지게 설정 (기본 3초)
+        if (duration > 0) {
+          setTimeout(() => {
+            if (window.hideTopNotification) window.hideTopNotification();
+          }, duration);
+        }
+      }
+    };
+  }
+
+  if (typeof window.hideTopNotification === 'undefined') {
+    window.hideTopNotification = function() {
+      const notification = document.getElementById('topNotification');
+      if (notification) {
+        notification.style.display = 'none';
+      }
+    };
+  }
+
+  if (typeof window.updateTopNotification === 'undefined') {
+    window.updateTopNotification = function(message) {
+      const textElement = document.getElementById('notificationText');
+      if (textElement) {
+        textElement.textContent = message;
+      }
+    };
+  }
+
+  // 추가적인 알림 메시지들 - 중복 선언 방지
+  if (typeof window.notifyGazeTrackingReady === 'undefined') {
+    window.notifyGazeTrackingReady = function() {
+      if (window.showTopNotification) window.showTopNotification('🎯 시선 추적이 준비되었습니다. 눈을 움직여서 스크롤을 테스트해보세요!', 3500);
+    };
+  }
+
+  if (typeof window.notifyFaceDetected === 'undefined') {
+    window.notifyFaceDetected = function() {
+      if (window.showTopNotification) window.showTopNotification('👀 얼굴이 감지되었습니다!', 1500);
+    };
+  }
+
+  if (typeof window.notifyCalibrationComplete === 'undefined') {
+    window.notifyCalibrationComplete = function() {
+      if (window.showTopNotification) window.showTopNotification('✅ 눈 위치 보정이 완료되었습니다!', 2500);
+    };
+  }
+
+  if (typeof window.notifyScrollDirection === 'undefined') {
+    window.notifyScrollDirection = function(direction) {
+      const messages = {
+        'up': '⬆️ 위쪽 스크롤 활성화',
+        'down': '⬇️ 아래쪽 스크롤 활성화',
+        'stop': '⏹️ 스크롤 정지'
+      };
+      const message = messages[direction] || '스크롤 방향 변경';
+      if (window.showTopNotification) window.showTopNotification(message, 1000);
+    };
+  }
+
+  // 카메라 권한 안내 함수 - 중복 선언 방지
+  if (typeof window.showCameraPermissionGuide === 'undefined') {
+    window.showCameraPermissionGuide = function() {
+      const guideMessage = `
+📹 카메라 권한 허용 방법:
+
+1️⃣ 주소창 왼쪽 카메라 아이콘 클릭
+   → 카메라 권한을 "허용"으로 설정
+
+2️⃣ 브라우저 설정에서 직접 설정
+   → chrome://settings/content/camera
+   → Gaze Scroll에 카메라 권한 허용
+
+3️⃣ 아래 🔄 재시도 버튼 클릭
+   → 권한 재요청 팝업 표시
+
+권한을 허용한 후 페이지를 새로고침해보세요!
+      `;
+
+      if (window.showTopNotification) window.showTopNotification(guideMessage, 0);
+    };
+  }
+
   function stopDebugVideo() {
-    if (debugVideo.srcObject) {
+    // 카메라 스트림 정지 (하지만 항상 켜두는 것이 좋으므로 실제로는 정지하지 않음)
+    // 필요시 정지하려면 아래 주석을 해제
+    /*
+    if (debugVideo && debugVideo.srcObject) {
       debugVideo.srcObject.getTracks().forEach(track => track.stop());
       debugVideo.srcObject = null;
     }
+    */
+
     // 디버그 비디오 배경 초기화
-    debugVideo.style.backgroundImage = 'none';
+    if (debugVideo) {
+      debugVideo.style.backgroundImage = 'none';
+    }
+
+    // 로딩 메시지 표시
+    const loadingElement = document.getElementById('cameraLoading');
+    if (loadingElement) {
+      loadingElement.style.display = 'block';
+      loadingElement.innerHTML = '📹 카메라 중지됨';
+      loadingElement.style.color = 'rgba(255,255,255,0.5)';
+    }
 
     // 메모리 정리
     if (debugCtx) {
@@ -322,7 +713,8 @@ document.addEventListener('DOMContentLoaded', function() {
       gazePosition.textContent = data.gazePosition;
     }
     if (data.brightnessDiff !== undefined) {
-      brightnessDiff.textContent = data.brightnessDiff.toFixed(3);
+      const bd = Number(data.brightnessDiff);
+      brightnessDiff.textContent = isFinite(bd) ? bd.toFixed(3) : '0.00';
     }
     if (data.scrollDirection !== undefined) {
       const directionText = data.scrollDirection === -1 ? '위로' :
@@ -403,27 +795,108 @@ document.addEventListener('DOMContentLoaded', function() {
       }
     }
 
-    // 디버그 비디오에 프레임 이미지 표시
+    // 디버그 데이터를 저장하고 프레임 이미지 표시
+    if (debugVideo) {
+      debugVideo.lastDebugData = data;
+    }
+
     if (data.frameImage) {
       displayDebugFrame(data.frameImage);
     }
 
-    // 캔버스에 시선 방향 및 얼굴/눈 영역 표시 (최적화: 3프레임에 1번만 그리기)
-    if (data.gazeX !== undefined && data.gazeY !== undefined && frameCount % 3 === 0) {
+    // 캔버스에 시선 방향 및 얼굴/눈 영역 표시
+    if (data.gazeX !== undefined && data.gazeY !== undefined) {
       const eyeRegions = data.eyeTracking && data.eyeTracking.regions ? data.eyeTracking.regions : null;
       drawGazeIndicator(data.gazeX, data.gazeY, eyeRegions, data.currentFaceRegion);
     }
   }
 
   function displayDebugFrame(imageData) {
-    // 디버그 모드에서 실시간으로 카메라 영상 표시
+    // Content Script의 이미지를 background로 사용 (항상 표시)
     if (debugVideo && imageData) {
       debugVideo.style.backgroundImage = `url(${imageData})`;
       debugVideo.style.backgroundSize = 'cover';
       debugVideo.style.backgroundPosition = 'center';
       debugVideo.style.backgroundRepeat = 'no-repeat';
-      debugVideo.style.opacity = '1'; // 항상 표시
+      debugVideo.style.opacity = '1';
+      const loadingElement = document.getElementById('cameraLoading');
+      if (loadingElement) {
+        loadingElement.style.display = 'none';
+      }
+    } else if (debugVideo) {
+      // 이미지가 없으면 background-image 제거
+      debugVideo.style.backgroundImage = 'none';
+      debugVideo.style.opacity = '1';
     }
+
+    // 얼굴 오버레이를 canvas에 그림 (항상 표시)
+    if (debugVideo.lastDebugData) {
+      if (debugVideo.lastDebugData.currentFaceRegion) {
+        drawFaceOverlayOnCanvas(debugVideo.lastDebugData);
+      } else {
+        // 얼굴이 없으면 canvas 클리어
+        const ctx = debugCanvas.getContext('2d');
+        ctx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
+      }
+    } else {
+      // 데이터가 없으면 canvas 클리어
+      const ctx = debugCanvas.getContext('2d');
+      ctx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
+    }
+  }
+
+  function drawFaceOverlayOnCanvas(debugData) {
+    if (!debugData.currentFaceRegion) return;
+
+    const ctx = debugCanvas.getContext('2d');
+    ctx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
+
+    const faceRegion = debugData.currentFaceRegion;
+    const scaleX = debugCanvas.width / 640; // 원본 해상도 640x480 기준
+    const scaleY = debugCanvas.height / 480;
+
+    // 얼굴 영역 표시
+    const faceX = faceRegion.x * scaleX;
+    const faceY = faceRegion.y * scaleY;
+    const faceWidth = faceRegion.width * scaleX;
+    const faceHeight = faceRegion.height * scaleY;
+
+    // 얼굴 윤곽선 (더 두껍고 선명하게)
+    ctx.strokeStyle = 'rgba(255, 255, 0, 0.9)';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(faceX, faceY, faceWidth, faceHeight);
+
+    // 얼굴 영역 채우기 (반투명)
+    ctx.fillStyle = 'rgba(255, 255, 0, 0.1)';
+    ctx.fillRect(faceX, faceY, faceWidth, faceHeight);
+
+    // 얼굴 영역 라벨
+    ctx.fillStyle = '#ffff00';
+    ctx.font = 'bold 12px Arial';
+    ctx.fillText(`얼굴 (${faceRegion.skinPercentage || '0'}%)`, faceX, faceY - 8);
+
+    // 눈 검색 영역 표시 (얼굴 영역 내)
+    const eyeY = faceY + faceHeight * 0.35;
+    const eyeHeight = faceHeight * 0.12;
+    const leftEyeX = faceX + faceWidth * 0.25;
+    const rightEyeX = faceX + faceWidth * 0.6;
+    const eyeWidth = faceWidth * 0.15;
+
+    // 왼쪽 눈 검색 영역
+    ctx.strokeStyle = 'rgba(0, 255, 0, 0.7)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(leftEyeX, eyeY, eyeWidth, eyeHeight);
+
+    // 오른쪽 눈 검색 영역
+    ctx.strokeStyle = 'rgba(0, 128, 255, 0.7)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(rightEyeX, eyeY, eyeWidth, eyeHeight);
+
+    // 눈 영역 라벨
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '10px Arial';
+    ctx.fillText('눈검색', leftEyeX, eyeY - 3);
+    ctx.fillText('눈검색', rightEyeX, eyeY - 3);
   }
 
   // 확대 기능 관련 함수들 제거됨 - 1배율 고정

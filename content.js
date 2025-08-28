@@ -28,6 +28,9 @@ class GazeScroll {
     this.scrollDirection = 0; // -1: up, 0: stop, 1: down
     this.scrollAcceleration = 0;
 
+    // 메시지 전송 상태 플래그
+    this.messageSendPaused = false;
+
     this.init();
   }
 
@@ -37,6 +40,146 @@ class GazeScroll {
 
     // 초기 설정 적용
     this.applyMirrorMode();
+  }
+
+  // 안전한 메시지 전송 함수
+  safeMessageSend(message, maxRetries = 3) {
+    // 메시지 전송이 일시 중단된 경우 무시
+    if (this.messageSendPaused) {
+      return Promise.resolve(false);
+    }
+
+    return new Promise((resolve) => {
+      let retryCount = 0;
+
+      const attemptSend = () => {
+        try {
+          // 확장 프로그램 컨텍스트 유효성 확인
+          if (!chrome?.runtime?.sendMessage) {
+            console.warn('Chrome runtime이 사용할 수 없습니다.');
+            this.handleConnectionLoss();
+            resolve(false);
+            return;
+          }
+
+          // 메시지 전송 시도
+          chrome.runtime.sendMessage(message)
+            .then((response) => {
+              // 성공
+              if (this.messageSendPaused) {
+                console.log('메시지 전송이 재개되었습니다.');
+                this.messageSendPaused = false;
+              }
+              resolve(true);
+            })
+            .catch((error) => {
+              const errorMessage = error?.message || '';
+              
+              // 특정 오류들은 재시도하지 않음
+              if (errorMessage.includes('Extension context invalidated') ||
+                  errorMessage.includes('message channel closed') ||
+                  errorMessage.includes('Receiving end does not exist') ||
+                  errorMessage.includes('Could not establish connection')) {
+                
+                this.handleConnectionLoss();
+                resolve(false);
+                return;
+              }
+
+              // 다른 오류는 재시도
+              retryCount++;
+              if (retryCount < maxRetries) {
+                console.warn(`메시지 전송 실패, 재시도 ${retryCount}/${maxRetries}:`, errorMessage);
+                setTimeout(attemptSend, 100 * retryCount); // 점진적 지연
+              } else {
+                console.warn('메시지 전송 최종 실패:', errorMessage);
+                resolve(false);
+              }
+            });
+
+        } catch (error) {
+          console.warn('메시지 전송 중 예외:', error?.message || error);
+          this.handleConnectionLoss();
+          resolve(false);
+        }
+      };
+
+      attemptSend();
+    });
+  }
+
+  // 연결 손실 처리
+  handleConnectionLoss() {
+    if (!this.messageSendPaused) {
+      console.warn('확장 프로그램 연결이 끊어졌습니다.');
+      this.messageSendPaused = true;
+
+      // 2초 후 재연결 시도
+      setTimeout(() => {
+        console.log('메시지 전송 재개를 시도합니다...');
+        this.messageSendPaused = false;
+      }, 2000);
+    }
+  }
+
+  sendInitialFrame() {
+    // 즉시 첫 프레임을 전송하여 "프레임 대기중" 상태를 해결
+    if (!this.isActive || !this.video || !this.canvas) {
+      return;
+    }
+
+    try {
+      if (this.video.readyState >= this.video.HAVE_CURRENT_DATA) {
+        this.ctx.drawImage(this.video, 0, 0, this.canvas.width, this.canvas.height);
+        
+        // 기본 디버그 데이터 생성
+        const debugData = {
+          gazePosition: '중앙',
+          gazeX: 0.5,
+          gazeY: 0.5,
+          brightnessDiff: '0.00',
+          scrollDirection: 0,
+          acceleration: 0,
+          regions: { top: '0.500', bottom: '0.500', center: '0.500' },
+          faceDetection: { status: 'initializing', message: '초기화 중...', confidence: 0 },
+          eyeTracking: { quality: { score: 0, status: 'initializing', message: '초기화 중...' } },
+          systemStatus: {
+            isActive: true,
+            isCalibrating: false,
+            debugMode: true,
+            mirrorMode: this.settings.mirrorMode
+          }
+        };
+
+        // 캔버스 이미지 캡처
+        const debugCanvas = document.createElement('canvas');
+        const debugCtx = debugCanvas.getContext('2d');
+        debugCanvas.width = 320;
+        debugCanvas.height = 240;
+        debugCtx.imageSmoothingEnabled = true;
+        debugCtx.imageSmoothingQuality = 'high';
+        debugCtx.drawImage(this.canvas, 0, 0, debugCanvas.width, debugCanvas.height);
+        
+        debugData.frameImage = debugCanvas.toDataURL('image/jpeg', 0.8);
+
+        // 팝업으로 전송 (안전한 방식)
+        this.safeMessageSend({
+          action: 'debugUpdate',
+          data: debugData
+        }).then((success) => {
+          if (success) {
+            console.log('✅ 초기 프레임 전송 완료');
+          } else {
+            console.warn('초기 프레임 전송 실패');
+          }
+        });
+      } else {
+        console.log('비디오 데이터가 아직 준비되지 않음, 500ms 후 재시도');
+        setTimeout(() => this.sendInitialFrame(), 500);
+      }
+    } catch (error) {
+      console.error('초기 프레임 전송 중 오류:', error);
+    }
   }
 
   setMirrorMode(enabled) {
@@ -60,14 +203,27 @@ class GazeScroll {
     this.eyeTrackingState.calibrationFrames = 0;
     this.eyeTrackingState.lastEyePosition = null;
 
-    this.showNotification('눈 위치를 다시 찾고 있습니다. 잠시만 기다려주세요...', 'info');
+    // 팝업으로 알림 전달 (안전한 방식)
+    this.safeMessageSend({
+      action: 'notify',
+      message: '눈 위치를 다시 찾고 있습니다. 잠시만 기다려주세요...',
+      duration: 2500
+    });
 
     // 3초 후에 캘리브레이션 완료 알림
     setTimeout(() => {
       if (this.eyeTrackingState.isCalibrated) {
-        this.showNotification('눈 중앙 맞추기가 완료되었습니다!', 'success');
+        this.safeMessageSend({
+          action: 'notify',
+          message: '눈 중앙 맞추기가 완료되었습니다!',
+          duration: 2000
+        });
       } else {
-        this.showNotification('눈을 찾지 못했습니다. 밝은 곳에서 다시 시도해주세요.', 'warning');
+        this.safeMessageSend({
+          action: 'notify',
+          message: '눈을 찾지 못했습니다. 밝은 곳에서 다시 시도해주세요.',
+          duration: 2500
+        });
       }
     }, 3000);
   }
@@ -80,7 +236,7 @@ class GazeScroll {
     this.video.autoplay = true;
     this.video.playsInline = true;
 
-    // 캔버스 요소 생성
+    // 캔버스 요소 생성 (willReadFrequently로 readback 최적화)
     this.canvas = document.createElement('canvas');
     this.canvas.style.display = 'none';
     this.canvas.width = 640;
@@ -89,7 +245,7 @@ class GazeScroll {
     document.body.appendChild(this.video);
     document.body.appendChild(this.canvas);
 
-    this.ctx = this.canvas.getContext('2d');
+    this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
   }
 
   handleMessage(message, sender, sendResponse) {
@@ -132,9 +288,11 @@ class GazeScroll {
 
       case 'tabUpdated':
         // 탭이 업데이트되면 필요한 초기화 작업
+        // 동기 처리이므로 응답 필요 없음
         break;
     }
-    return true;
+    // 비동기 응답이 필요한 경우에만 true를 반환해야 함
+    return false;
   }
 
   async startGazeTracking() {
@@ -158,15 +316,52 @@ class GazeScroll {
       });
 
       this.video.srcObject = stream;
+      
+      // 비디오 메타데이터 로드 대기
+      await new Promise((resolve, reject) => {
+        this.video.onloadedmetadata = () => {
+          console.log('비디오 메타데이터 로드됨:', {
+            width: this.video.videoWidth,
+            height: this.video.videoHeight,
+            duration: this.video.duration
+          });
+          resolve();
+        };
+        this.video.onerror = reject;
+        setTimeout(reject, 5000); // 5초 타임아웃
+      });
+
       await this.video.play();
+      
+      // 비디오가 실제로 재생되기 시작할 때까지 대기
+      await new Promise((resolve) => {
+        const checkPlaying = () => {
+          if (this.video.currentTime > 0 && !this.video.paused && !this.video.ended && this.video.readyState > 2) {
+            console.log('비디오 재생 시작됨');
+            resolve();
+          } else {
+            setTimeout(checkPlaying, 100);
+          }
+        };
+        checkPlaying();
+      });
 
       this.isActive = true;
 
       // 시선 추적 루프 시작
       this.startTrackingLoop();
 
+      // 즉시 첫 프레임 전송 (프레임 대기중 상태 해결)
+      setTimeout(() => {
+        this.sendInitialFrame();
+      }, 100);
+
       console.log('시선 추적이 시작되었습니다.');
-      this.showNotification('시선 추적이 시작되었습니다! 이제 눈을 움직여서 스크롤해보세요.', 'success');
+      this.safeMessageSend({
+        action: 'notify',
+        message: '시선 추적이 시작되었습니다! 이제 눈을 움직여서 스크롤해보세요.',
+        duration: 3500
+      });
 
       return Promise.resolve();
     } catch (error) {
@@ -259,11 +454,19 @@ class GazeScroll {
     if (!this.isActive || this.isCalibrating) return;
 
     this.isCalibrating = true;
-    this.showNotification('보정 모드에서는 화면 중앙을 바라봐주세요. 3초 후 자동으로 완료됩니다.', 'info');
+    this.safeMessageSend({
+      action: 'notify',
+      message: '보정 모드에서는 화면 중앙을 바라봐주세요. 3초 후 자동으로 완료됩니다.',
+      duration: 3000
+    });
 
     setTimeout(() => {
       this.isCalibrating = false;
-      this.showNotification('보정이 완료되었습니다!', 'success');
+      this.safeMessageSend({
+        action: 'notify',
+        message: '보정이 완료되었습니다!',
+        duration: 2000
+      });
     }, 3000);
   }
 
@@ -332,10 +535,8 @@ class GazeScroll {
             this.performScroll();
           }
 
-          // 디버그 모드에서 정보 전송 (최적화: 3프레임에 1번만 전송)
-          if ((this.settings.debugMode || this.eyeTrackingState.isCalibrated) && frameCount % 3 === 0) {
+          // 디버그 정보 전송 (항상 전송 - 팝업에서 카메라 표시용)
             this.sendDebugInfo(regions, currentBrightness, previousBrightness, gazeY, screenHeight, eyeRegions);
-          }
 
           previousBrightness = currentBrightness;
         }
@@ -615,11 +816,13 @@ class GazeScroll {
         const g = data[idx + 1];
         const b = data[idx + 2];
 
-        // 간소화된 피부톤 감지 (RGB 기반)
-        const isSkin = r > 60 && g > 40 && b > 20 &&
-                      r > g && r > b &&
-                      Math.abs(r - g) < 50 &&
-                      r / Math.max(g, b) < 2.5;
+        // 더 넓은 범위의 피부톤 감지 (어두운 환경 지원)
+        const brightness = (r + g + b) / 3;
+        const isSkin = (brightness > 30 && r > 25 && g > 20 && b > 10) && // 최소 밝기 (더 낮음)
+                      (r > g * 0.7 && r > b * 0.7) && // 붉은 톤이 어느 정도 있음 (완화)
+                      (Math.abs(r - g) < 100 && Math.abs(r - b) < 100) && // 채도 범위 넓힘
+                      (r / Math.max(g, b) < 4.0) && // 색상 비율 완화
+                      (brightness < 220); // 너무 밝지 않음
 
         skinMap[y * width + x] = isSkin ? 1 : 0;
 
@@ -631,7 +834,7 @@ class GazeScroll {
       }
     }
 
-    if (skinPixels > (width * height) / (step * step * 50)) { // 최소 피부톤 픽셀 수
+    if (skinPixels > (width * height) / (step * step * 200)) { // 최소 피부톤 픽셀 수 (매우 낮은 임계값)
       centerX /= skinPixels;
       centerY /= skinPixels;
 
@@ -762,8 +965,8 @@ class GazeScroll {
       for (let cx = startX; cx < endX; cx += 2) {
         const idx = (cy * width + cx) * 4;
         const brightness = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
-        totalBrightness += brightness;
-        pixelCount++;
+          totalBrightness += brightness;
+          pixelCount++;
       }
     }
 
@@ -819,6 +1022,21 @@ class GazeScroll {
   }
 
   sendDebugInfo(regions, currentBrightness, previousBrightness, gazeY, screenHeight, eyeRegions) {
+    // 메시지 전송이 일시 중단된 경우 전송하지 않음
+    if (this.messageSendPaused) {
+      return;
+    }
+
+    // 메시지 전송 빈도를 제한 (매 3프레임마다 1번만 전송 - 더 빠른 업데이트)
+    if (!this.frameCount) {
+      this.frameCount = 0;
+    }
+    this.frameCount++;
+
+    if (this.frameCount % 3 !== 0) {
+      return; // 3프레임에 1번만 전송 (더 빠른 업데이트)
+    }
+
     // 시선 위치를 0-1 범위로 정규화
     const gazeRatio = gazeY / screenHeight;
     const brightnessDiff = currentBrightness - previousBrightness;
@@ -847,7 +1065,8 @@ class GazeScroll {
       gazeY: gazeRatio,
       brightnessDiff: brightnessDiff.toFixed(2),
       scrollDirection: this.scrollDirection,
-      acceleration: this.scrollAcceleration.toFixed(2),
+      // 숫자 그대로 전송하여 수신측에서 toFixed 사용 가능하도록 함
+      acceleration: this.scrollAcceleration,
       regions: {
         top: (regions.top / 255).toFixed(3),
         bottom: (regions.bottom / 255).toFixed(3),
@@ -894,31 +1113,32 @@ class GazeScroll {
       }
     };
 
-    // 디버그 모드에서 캔버스 이미지 캡처 (항상 캡처하도록 수정)
-    if (this.settings.debugMode && this.canvas) {
+    // 항상 캔버스 이미지 캡처 (카메라 표시용)
+    if (this.canvas) {
       try {
-        const imageData = this.canvas.toDataURL('image/jpeg', 0.8); // 품질 높임
+        // 디버그용으로 최적화된 크기로 캡처
+        const debugCanvas = document.createElement('canvas');
+        const debugCtx = debugCanvas.getContext('2d');
+        debugCanvas.width = 320;
+        debugCanvas.height = 240;
+
+        // 원본 캔버스를 디버그 크기로 축소 (더 부드럽게)
+        debugCtx.imageSmoothingEnabled = true;
+        debugCtx.imageSmoothingQuality = 'high';
+        debugCtx.drawImage(this.canvas, 0, 0, debugCanvas.width, debugCanvas.height);
+
+        const imageData = debugCanvas.toDataURL('image/jpeg', 0.8);
         debugData.frameImage = imageData;
       } catch (error) {
-        console.warn('디버그 이미지 캡처 실패:', error);
+        console.warn('카메라 이미지 캡처 실패:', error);
       }
     }
 
-    // popup으로 디버그 정보 전송
-    try {
-      chrome.runtime.sendMessage({
-        action: 'debugUpdate',
-        data: debugData
-      }, function(response) {
-        if (chrome.runtime.lastError) {
-          // 디버그 모드가 비활성화되었거나 popup이 닫힌 경우
-          console.warn('디버그 정보 전송 실패:', chrome.runtime.lastError.message);
-        }
-      });
-    } catch (error) {
-      // 메시지 채널이 닫힌 경우
-      console.warn('디버그 메시지 전송 중 오류:', error);
-    }
+    // popup으로 카메라 정보 전송 (안전한 방식)
+    this.safeMessageSend({
+      action: 'debugUpdate',
+      data: debugData
+    });
   }
 
   getFaceDetectionStatus() {
