@@ -163,19 +163,6 @@
         ⏹️ 제어 중지
       </button>
 
-      <!-- 카메라 권한 재요청 버튼 -->
-      <button
-        id="retryCameraButton"
-        class="control-button"
-        style="
-          display: none;
-          background: linear-gradient(45deg, #ff9800, #f57c00);
-          margin-top: 10px;
-        "
-      >
-        🔄 카메라 권한 재요청
-      </button>
-
       <div class="gesture-list">
         <h3 style="margin: 0 0 10px 0; font-size: 14px">🎭 지원 제스처:</h3>
 
@@ -202,31 +189,11 @@
       </div>
 
       <div class="info-text">
-        💡 카메라 권한을 허용하고 손 제스처를 만들어보세요!<br />
-        모든 브라우저 탭에서 작동합니다.
-      </div>
-
-      <!-- 카메라 스트림 표시 영역 -->
-      <div id="cameraContainer" class="camera-container" style="display: none">
-        <video
-          id="cameraStream"
-          autoplay
-          playsinline
-          muted
-          style="width: 100%; border-radius: 8px"
-        ></video>
-        <div
-          class="gesture-indicator"
-          id="gestureIndicator"
-          style="
-            margin-top: 10px;
-            text-align: center;
-            color: #4caf50;
-            font-weight: bold;
-          "
+        🎮 <strong>시뮬레이션 모드:</strong> 실제 카메라 없이<br />
+        웹페이지의 제스처 버튼으로 스크롤을 테스트하세요!<br />
+        <small style="color: rgba(255, 255, 255, 0.6)"
+          >모든 브라우저 탭에서 작동합니다.</small
         >
-          손을 보여주세요 👋
-        </div>
       </div>
     </div>
 

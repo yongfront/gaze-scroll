@@ -4,23 +4,13 @@
   "version": "1.0.0",
   "description": "손 제스처로 모든 브라우저 탭의 스크롤을 제어하세요",
   "permissions": ["activeTab", "tabs", "scripting"],
-  "optional_permissions": ["camera"],
   "host_permissions": ["<all_urls>"],
   "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+    "extension_pages": "script-src 'self'; object-src 'self'"
   },
   "web_accessible_resources": [
     {
-      "resources": [
-        "help.html",
-        "help.js",
-        "icons/*",
-        "gesture-manager.js",
-        "plugin-manager.js",
-        "settings-manager.js",
-        "gesture-examples.json",
-        "plugin-examples.json"
-      ],
+      "resources": ["help.html", "help.js", "icons/*"],
       "matches": ["<all_urls>"]
     }
   ],

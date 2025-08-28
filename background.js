@@ -53,37 +53,7 @@ class TabScrollController {
           sendResponse({ activeTab });
           break;
 
-        case 'CAMERA_STARTED':
-          console.log('카메라 스트림 시작됨:', request.streamId);
-          sendResponse({ success: true });
-          break;
 
-        case 'START_CAMERA_IN_CONTENT':
-          await this.startCameraInContent(sender.tab?.id);
-          sendResponse({ success: true });
-          break;
-
-        case 'STOP_CAMERA_IN_CONTENT':
-          await this.stopCameraInContent(sender.tab?.id);
-          sendResponse({ success: true });
-          break;
-
-        case 'CAMERA_READY':
-          // 팝업으로 카메라 준비 완료 알림
-          chrome.runtime.sendMessage({
-            action: 'CAMERA_READY'
-          });
-          sendResponse({ success: true });
-          break;
-
-        case 'CAMERA_ERROR':
-          // 팝업으로 카메라 오류 알림
-          chrome.runtime.sendMessage({
-            action: 'CAMERA_ERROR',
-            error: request.error
-          });
-          sendResponse({ success: true });
-          break;
 
         case 'GESTURE_STATUS':
           // 팝업으로 제스처 상태 실시간 전송
@@ -105,22 +75,7 @@ class TabScrollController {
 
   async startScrollControl() {
     this.isControlling = true;
-    console.log('다른 탭 스크롤 제어 시작');
-
-    // 모든 탭에 content script 주입
-    const tabs = await chrome.tabs.query({});
-    for (const tab of tabs) {
-      if (tab.url && tab.url.startsWith('http')) {
-        try {
-          await chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            files: ['content.js']
-          });
-        } catch (error) {
-          console.log(`탭 ${tab.id}에 content script 주입 실패:`, error);
-        }
-      }
-    }
+    console.log('스크롤 제어 시작됨 - content script는 이미 모든 탭에 자동으로 주입되어 있습니다');
   }
 
   async stopScrollControl() {
@@ -147,49 +102,32 @@ class TabScrollController {
     }
   }
 
-  async startCameraInContent(tabId) {
-    if (!tabId) {
-      const activeTab = await this.getActiveTab();
-      tabId = activeTab?.id;
-    }
 
-    if (!tabId) return;
-
-    try {
-      // 해당 탭의 content script에 카메라 시작 명령 전송
-      await chrome.tabs.sendMessage(tabId, {
-        action: 'START_CAMERA_IN_CONTENT'
-      });
-      console.log(`탭 ${tabId}에서 카메라 시작 요청 전송`);
-    } catch (error) {
-      console.error('카메라 시작 요청 전송 실패:', error);
-    }
-  }
-
-  async stopCameraInContent(tabId) {
-    if (!tabId) {
-      const activeTab = await this.getActiveTab();
-      tabId = activeTab?.id;
-    }
-
-    if (!tabId) return;
-
-    try {
-      // 해당 탭의 content script에 카메라 중지 명령 전송
-      await chrome.tabs.sendMessage(tabId, {
-        action: 'STOP_CAMERA_IN_CONTENT'
-      });
-      console.log(`탭 ${tabId}에서 카메라 중지 요청 전송`);
-    } catch (error) {
-      console.error('카메라 중지 요청 전송 실패:', error);
-    }
-  }
 
   async getActiveTab() {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     return tabs[0];
   }
 }
+
+// 전역 오류 핸들러 추가
+self.addEventListener('error', (event) => {
+  console.error('Background script error:', event.error);
+  // Extension context invalidated 오류는 무시
+  if (event.error && event.error.message &&
+      event.error.message.includes('Extension context invalidated')) {
+    event.preventDefault();
+  }
+});
+
+self.addEventListener('unhandledrejection', (event) => {
+  console.error('Background script unhandled rejection:', event.reason);
+  // Extension context invalidated 오류는 무시
+  if (event.reason && event.reason.message &&
+      event.reason.message.includes('Extension context invalidated')) {
+    event.preventDefault();
+  }
+});
 
 // 컨트롤러 초기화
 const controller = new TabScrollController();
