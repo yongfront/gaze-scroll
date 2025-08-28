@@ -6,7 +6,7 @@
   "permissions": ["activeTab", "tabs", "scripting", "camera"],
   "host_permissions": ["<all_urls>"],
   "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; object-src 'self'"
   },
   "web_accessible_resources": [
     {

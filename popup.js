@@ -122,6 +122,9 @@ class PopupController {
             console.error('카메라 오류:', message.error);
             this.showError(message.error);
             this.showCameraRetryButton();
+          } else if (message.action === 'GESTURE_STATUS_UPDATE') {
+            // 실시간 제스처 상태 업데이트
+            this.updateGestureStatus(message.status);
           }
         });
         this.messageListenerAdded = true;
@@ -148,13 +151,50 @@ class PopupController {
   startGestureDetection() {
     console.log('제스처 감지 UI 시작');
 
-    // 제스처 감지 타이머 시작 (UI 표시용)
-    this.gestureTimer = setInterval(() => {
-      if (this.isControlling) {
-        // Content Script에서 제스처를 처리하므로 여기서는 UI만 업데이트
-        // 실제로는 Content Script의 메시지를 받아서 표시
+    // Content Script에서 실시간으로 제스처 상태를 받으므로
+    // 여기서는 별도의 타이머가 필요 없음
+    // updateGestureStatus 메소드에서 실시간 업데이트 처리
+  }
+
+  updateGestureStatus(status) {
+    if (!status) return;
+
+    const { gesture, fingerCount, confidence } = status;
+
+    // 제스처 이름 매핑
+    const gestureNames = {
+      'fist': '✊ 주먹',
+      'one_finger': '☝️ 한 손가락',
+      'thumb_only': '👍 엄지',
+      'peace': '✌️ 평화',
+      'two_fingers': '✌️ 두 손가락',
+      'three_fingers': '🤟 세 손가락',
+      'four_fingers': '🤟 네 손가락',
+      'open_hand': '🖐️ 손바닥',
+      null: '손을 보여주세요 👋'
+    };
+
+    // 팝업의 제스처 인디케이터 업데이트
+    if (this.gestureIndicator) {
+      if (gesture) {
+        this.gestureIndicator.textContent = `${gestureNames[gesture]} (${fingerCount}개)`;
+        this.gestureIndicator.style.color = '#4CAF50';
+        this.gestureIndicator.style.fontWeight = 'bold';
+      } else {
+        this.gestureIndicator.textContent = gestureNames[null];
+        this.gestureIndicator.style.color = '#666';
+        this.gestureIndicator.style.fontWeight = 'normal';
       }
-    }, 1000);
+    }
+
+    // 상태 표시줄 업데이트
+    if (this.statusText && gesture) {
+      this.statusText.textContent = `제스처 감지: ${gestureNames[gesture]}`;
+      this.statusText.style.color = '#4CAF50';
+    }
+
+    // 디버그 정보 (콘솔)
+    console.log(`제스처 상태: ${gesture || '없음'} | 손가락: ${fingerCount}개 | 정확도: ${(confidence * 100).toFixed(1)}%`);
   }
 
 

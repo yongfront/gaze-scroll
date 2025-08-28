@@ -85,6 +85,15 @@ class TabScrollController {
           sendResponse({ success: true });
           break;
 
+        case 'GESTURE_STATUS':
+          // 팝업으로 제스처 상태 실시간 전송
+          chrome.runtime.sendMessage({
+            action: 'GESTURE_STATUS_UPDATE',
+            status: request.status
+          });
+          sendResponse({ success: true });
+          break;
+
         default:
           sendResponse({ error: 'Unknown action' });
       }
