@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>손 제스처 스크롤 컨트롤러</title>
+    <style>
+      body {
+        width: 350px;
+        min-height: 500px;
+        margin: 0;
+        padding: 20px;
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+      }
+
+      .container {
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 15px;
+        padding: 20px;
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+      }
+
+      h1 {
+        margin: 0 0 20px 0;
+        font-size: 18px;
+        text-align: center;
+        color: #fff;
+      }
+
+      .status-indicator {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 15px 0;
+        padding: 10px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.1);
+      }
+
+      .status-dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        margin-right: 10px;
+      }
+
+      .status-dot.active {
+        background: #4caf50;
+        box-shadow: 0 0 10px rgba(76, 175, 80, 0.5);
+      }
+
+      .status-dot.inactive {
+        background: #666;
+      }
+
+      .control-button {
+        width: 100%;
+        padding: 15px;
+        margin: 10px 0;
+        border: none;
+        border-radius: 10px;
+        font-size: 16px;
+        font-weight: bold;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+
+      .control-button.start {
+        background: linear-gradient(45deg, #4caf50, #45a049);
+        color: white;
+      }
+
+      .control-button.start:hover {
+        background: linear-gradient(45deg, #45a049, #4caf50);
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(76, 175, 80, 0.3);
+      }
+
+      .control-button.stop {
+        background: linear-gradient(45deg, #f44336, #d32f2f);
+        color: white;
+      }
+
+      .control-button.stop:hover {
+        background: linear-gradient(45deg, #d32f2f, #f44336);
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(244, 67, 54, 0.3);
+      }
+
+      .gesture-list {
+        margin-top: 20px;
+      }
+
+      .gesture-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 8px 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        font-size: 12px;
+      }
+
+      .gesture-name {
+        font-weight: bold;
+      }
+
+      .gesture-action {
+        color: #ccc;
+        font-size: 11px;
+      }
+
+      .info-text {
+        font-size: 11px;
+        color: rgba(255, 255, 255, 0.7);
+        text-align: center;
+        margin-top: 15px;
+        line-height: 1.4;
+      }
+
+      .current-tab {
+        background: rgba(255, 255, 255, 0.1);
+        padding: 10px;
+        border-radius: 8px;
+        margin: 15px 0;
+        font-size: 12px;
+      }
+
+      .tab-title {
+        font-weight: bold;
+        margin-bottom: 5px;
+      }
+
+      .tab-url {
+        color: rgba(255, 255, 255, 0.6);
+        word-break: break-all;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>🎯 손 제스처 스크롤 컨트롤러</h1>
+
+      <div class="status-indicator">
+        <div id="statusDot" class="status-dot inactive"></div>
+        <span id="statusText">대기 중</span>
+      </div>
+
+      <div id="currentTab" class="current-tab">
+        <div class="tab-title">📄 현재 탭:</div>
+        <div id="tabInfo" class="tab-url">탭 정보를 불러오는 중...</div>
+      </div>
+
+      <button id="controlButton" class="control-button start">
+        ▶️ 제어 시작
+      </button>
+
+      <button id="stopButton" class="control-button stop" style="display: none">
+        ⏹️ 제어 중지
+      </button>
+
+      <!-- 카메라 권한 재요청 버튼 -->
+      <button
+        id="retryCameraButton"
+        class="control-button"
+        style="
+          display: none;
+          background: linear-gradient(45deg, #ff9800, #f57c00);
+          margin-top: 10px;
+        "
+      >
+        🔄 카메라 권한 재요청
+      </button>
+
+      <div class="gesture-list">
+        <h3 style="margin: 0 0 10px 0; font-size: 14px">🎭 지원 제스처:</h3>
+
+        <div class="gesture-item">
+          <span class="gesture-name">🖐️ 손바닥 펴기</span>
+          <span class="gesture-action">위/아래 이동</span>
+        </div>
+        <div class="gesture-item">
+          <span class="gesture-name">👆 한 손가락</span>
+          <span class="gesture-action">맨 위/아래 이동</span>
+        </div>
+        <div class="gesture-item">
+          <span class="gesture-name">✌️ 평화 ✌️</span>
+          <span class="gesture-action">빠른 아래</span>
+        </div>
+        <div class="gesture-item">
+          <span class="gesture-name">🤘 락</span>
+          <span class="gesture-action">빠른 위</span>
+        </div>
+        <div class="gesture-item">
+          <span class="gesture-name">✊ 주먹</span>
+          <span class="gesture-action">위로 스크롤</span>
+        </div>
+      </div>
+
+      <div class="info-text">
+        💡 카메라 권한을 허용하고 손 제스처를 만들어보세요!<br />
+        모든 브라우저 탭에서 작동합니다.
+      </div>
+
+      <!-- 카메라 스트림 표시 영역 -->
+      <div id="cameraContainer" class="camera-container" style="display: none">
+        <video
+          id="cameraStream"
+          autoplay
+          playsinline
+          muted
+          style="width: 100%; border-radius: 8px"
+        ></video>
+        <div
+          class="gesture-indicator"
+          id="gestureIndicator"
+          style="
+            margin-top: 10px;
+            text-align: center;
+            color: #4caf50;
+            font-weight: bold;
+          "
+        >
+          손을 보여주세요 👋
+        </div>
+      </div>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

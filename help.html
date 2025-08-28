@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>손 제스처 스크롤 컨트롤러 - 도움말</title>
+    <style>
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        line-height: 1.6;
+        margin: 0;
+        padding: 20px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        min-height: 100vh;
+      }
+
+      .container {
+        max-width: 800px;
+        margin: 0 auto;
+        background: rgba(255, 255, 255, 0.1);
+        padding: 30px;
+        border-radius: 15px;
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+      }
+
+      h1 {
+        text-align: center;
+        margin-bottom: 30px;
+        font-size: 2.5em;
+        background: linear-gradient(45deg, #fff, #ccc);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+
+      h2 {
+        border-bottom: 2px solid rgba(255, 255, 255, 0.3);
+        padding-bottom: 10px;
+        margin-top: 40px;
+        color: #fff;
+      }
+
+      h3 {
+        color: #4fc3f7;
+        margin-top: 25px;
+      }
+
+      .help-section {
+        background: rgba(255, 255, 255, 0.1);
+        padding: 20px;
+        border-radius: 10px;
+        margin: 20px 0;
+        border-left: 4px solid #4fc3f7;
+      }
+
+      .error-box {
+        background: rgba(244, 67, 54, 0.2);
+        border: 1px solid rgba(244, 67, 54, 0.3);
+        border-radius: 8px;
+        padding: 15px;
+        margin: 15px 0;
+      }
+
+      .solution-box {
+        background: rgba(76, 175, 80, 0.2);
+        border: 1px solid rgba(76, 175, 80, 0.3);
+        border-radius: 8px;
+        padding: 15px;
+        margin: 15px 0;
+      }
+
+      .code {
+        background: rgba(0, 0, 0, 0.3);
+        padding: 10px;
+        border-radius: 5px;
+        font-family: "Courier New", monospace;
+        margin: 10px 0;
+        display: block;
+      }
+
+      .gesture-list {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 15px;
+        margin: 20px 0;
+      }
+
+      .gesture-item {
+        background: rgba(255, 255, 255, 0.1);
+        padding: 15px;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+
+      .gesture-emoji {
+        font-size: 1.5em;
+        margin-bottom: 5px;
+      }
+
+      .back-button {
+        position: fixed;
+        top: 20px;
+        left: 20px;
+        padding: 10px 20px;
+        background: rgba(255, 255, 255, 0.2);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        border-radius: 8px;
+        color: white;
+        text-decoration: none;
+        transition: all 0.3s ease;
+      }
+
+      .back-button:hover {
+        background: rgba(255, 255, 255, 0.3);
+        transform: translateY(-2px);
+      }
+
+      .highlight {
+        background: rgba(255, 255, 0, 0.3);
+        padding: 2px 6px;
+        border-radius: 3px;
+      }
+    </style>
+  </head>
+  <body>
+    <a href="#" id="backButton" class="back-button">← 뒤로가기</a>
+
+    <div class="container">
+      <h1>🎯 손 제스처 스크롤 컨트롤러 도움말</h1>
+
+      <div class="help-section">
+        <h2>🚨 카메라 권한 문제 해결</h2>
+
+        <div class="error-box">
+          <h3>❌ "카메라 권한이 거부되었습니다" 오류</h3>
+          <p>
+            카메라 권한이 거부되었을 때 다음과 같은 방법으로 해결할 수 있습니다:
+          </p>
+        </div>
+
+        <h3>🔧 확장 프로그램 오류 해결</h3>
+
+        <h4>Permission 'camera' is unknown 오류:</h4>
+        <ol>
+          <li><span class="highlight">chrome://extensions/</span> 접속</li>
+          <li>
+            "손 제스처 스크롤 컨트롤러" 우클릭 →
+            <span class="highlight">제거</span>
+          </li>
+          <li>확장 프로그램 다시 로드 또는 재설치</li>
+        </ol>
+
+        <h4>Content Security Policy 오류:</h4>
+        <ol>
+          <li>
+            <span class="highlight">chrome://extensions/</span>에서 확장
+            프로그램 새로고침
+          </li>
+          <li>브라우저를 완전히 종료하고 다시 시작</li>
+          <li>시크릿 모드에서 시도 (<span class="code">Ctrl+Shift+N</span>)</li>
+          <li>
+            개발자 도구에서 캐시 비우기 (<span class="code"
+              >F12 → Network → Disable cache</span
+            >)
+          </li>
+        </ol>
+
+        <h4>카메라 접근 실패 DOMException:</h4>
+        <ol>
+          <li>
+            카메라가 다른 프로그램에서 사용중인지 확인 (Zoom, Teams 등 종료)
+          </li>
+          <li>브라우저 권한 재설정 (주소창 왼쪽 🔒 아이콘)</li>
+          <li>시스템 설정에서 카메라 권한 확인</li>
+          <li>카메라 드라이버 업데이트</li>
+        </ol>
+
+        <h3>🔧 브라우저별 해결 방법</h3>
+
+        <h4>🌐 Chrome/Chromium 브라우저:</h4>
+        <ol>
+          <li>주소창 왼쪽 <span class="highlight">🔒</span> 아이콘 클릭</li>
+          <li>
+            <span class="highlight">카메라</span> 권한을
+            <span class="highlight">'허용'</span>으로 변경
+          </li>
+          <li>
+            페이지 새로고침 (<span class="code">Ctrl+R</span> 또는
+            <span class="code">F5</span>)
+          </li>
+        </ol>
+
+        <h4>🦊 Firefox 브라우저:</h4>
+        <ol>
+          <li>주소창 왼쪽 <span class="highlight">🔒</span> 아이콘 클릭</li>
+          <li><span class="highlight">연결 보안 → 자세히 보기</span></li>
+          <li>
+            <span class="highlight">권한</span> 탭에서 카메라
+            <span class="highlight">'허용'</span>으로 변경
+          </li>
+        </ol>
+
+        <h4>🍎 Safari 브라우저:</h4>
+        <ol>
+          <li>
+            <span class="highlight">Safari 환경설정 → 웹사이트 → 카메라</span>
+          </li>
+          <li>
+            현재 웹사이트의 카메라 권한
+            <span class="highlight">'허용'</span>으로 변경
+          </li>
+        </ol>
+
+        <div class="solution-box">
+          <h3>💡 추가 해결 방법</h3>
+          <ul>
+            <li>
+              <strong>시크릿 모드에서 시도:</strong>
+              <span class="code">Ctrl+Shift+N</span> (또는
+              <span class="code">Cmd+Shift+N</span>)
+            </li>
+            <li>
+              <strong>확장 프로그램 재설치:</strong> chrome://extensions/ 에서
+              제거 후 재설치
+            </li>
+            <li>
+              <strong>브라우저 캐시 정리:</strong>
+              chrome://settings/clearBrowserData
+            </li>
+            <li>
+              <strong>다른 카메라 앱 종료:</strong> Zoom, Teams 등 다른
+              프로그램에서 카메라 사용 확인
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="help-section">
+        <h2>🎭 지원 제스처</h2>
+        <p>카메라 앞에서 손을 움직여 브라우저를 제어하세요!</p>
+
+        <div class="gesture-list">
+          <div class="gesture-item">
+            <div class="gesture-emoji">🖐️</div>
+            <h4>손바닥 펴기</h4>
+            <p>손가락 3개 이상 펴고 위/아래로 움직여 스크롤</p>
+          </div>
+
+          <div class="gesture-item">
+            <div class="gesture-emoji">👆</div>
+            <h4>검지 한 개</h4>
+            <p>빠른 아래로 스크롤 (600px)</p>
+          </div>
+
+          <div class="gesture-item">
+            <div class="gesture-emoji">🖕</div>
+            <h4>중지 한 개</h4>
+            <p>위로 스크롤 (400px)</p>
+          </div>
+
+          <div class="gesture-item">
+            <div class="gesture-emoji">✌️</div>
+            <h4>평화 제스처</h4>
+            <p>빠른 아래로 스크롤 (800px)</p>
+          </div>
+
+          <div class="gesture-item">
+            <div class="gesture-emoji">🤘</div>
+            <h4>락 제스처</h4>
+            <p>빠른 위로 스크롤 (1000px)</p>
+          </div>
+
+          <div class="gesture-item">
+            <div class="gesture-emoji">✊</div>
+            <h4>주먹</h4>
+            <p>위로 스크롤 (500px)</p>
+          </div>
+
+          <div class="gesture-item">
+            <div class="gesture-emoji">🤞</div>
+            <h4>약지 한 개</h4>
+            <p>아래로 스크롤 (500px)</p>
+          </div>
+
+          <div class="gesture-item">
+            <div class="gesture-emoji">👌</div>
+            <h4>새끼 한 개</h4>
+            <p>빠른 위로 스크롤 (800px)</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="help-section">
+        <h2>⚙️ 설정 및 사용법</h2>
+
+        <h3>민감도 조절</h3>
+        <p>설정에서 민감도를 조절하여 손 인식 감도를 변경할 수 있습니다.</p>
+
+        <h3>스크롤 속도 조절</h3>
+        <p>한 번 제스처로 스크롤되는 픽셀 수를 조절할 수 있습니다.</p>
+
+        <h3>카메라 뷰 토글</h3>
+        <p>카메라 화면 표시 여부를 설정할 수 있습니다.</p>
+      </div>
+
+      <div class="help-section">
+        <h2>🔧 문제 해결</h2>
+
+        <h3>손이 인식되지 않아요</h3>
+        <ul>
+          <li>카메라에 손이 잘 보이도록 가까이 대세요</li>
+          <li>조명이 충분한 곳에서 사용하세요</li>
+          <li>손가락을 명확하게 펴거나 접으세요</li>
+        </ul>
+
+        <h3>스크롤이 너무 느려요/빨라요</h3>
+        <ul>
+          <li>설정에서 스크롤 속도를 조절하세요</li>
+          <li>민감도를 조절하여 제스처 인식 빈도를 변경하세요</li>
+        </ul>
+
+        <h3>확장 프로그램이 작동하지 않아요</h3>
+        <ul>
+          <li>
+            chrome://extensions/ 에서 확장 프로그램이 활성화되어 있는지 확인
+          </li>
+          <li>페이지 새로고침을 해보세요</li>
+          <li>확장 프로그램을 다시 로드해보세요</li>
+        </ul>
+      </div>
+
+      <div class="help-section">
+        <h2>📞 지원 및 피드백</h2>
+        <p>문제가 지속되거나 개선 제안사항이 있으시면 언제든지 연락주세요!</p>
+
+        <div style="text-align: center; margin-top: 30px">
+          <p style="font-size: 1.2em">🎉 즐거운 사용 되세요!</p>
+        </div>
+      </div>
+    </div>
+
+    <script src="help.js"></script>
+  </body>
+</html>
