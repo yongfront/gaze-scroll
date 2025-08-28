@@ -7,6 +7,7 @@ class GazeScroll {
     this.canvas = null;
     this.video = null;
     this.animationId = null;
+
     this.settings = {
       scrollSpeed: 50,
       topZone: 30,
@@ -269,24 +270,37 @@ class GazeScroll {
   startTrackingLoop() {
     let previousBrightness = 0;
     let frameCount = 0;
+    let lastFrameTime = 0;
+    const targetFPS = 10; // 10fps로 제한하여 성능 개선
+    const frameInterval = 1000 / targetFPS;
 
-    const track = () => {
+    const track = (currentTime = 0) => {
       if (!this.isActive) return;
+
+      // 프레임 레이트 제한
+      if (currentTime - lastFrameTime < frameInterval) {
+        this.animationId = requestAnimationFrame(track);
+        return;
+      }
+      lastFrameTime = currentTime;
 
       try {
         // 캔버스에 비디오 프레임 그리기
         if (this.video.readyState === this.video.HAVE_ENOUGH_DATA) {
           this.ctx.drawImage(this.video, 0, 0, this.canvas.width, this.canvas.height);
 
-          // 이미지 데이터 가져오기
+          // 이미지 데이터 가져오기 (최적화: 필요한 영역만 처리)
           const imageData = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
           const data = imageData.data;
 
           // 간단한 밝기 분석으로 시선 방향 추정
           const regions = this.analyzeImageRegions(data, this.canvas.width, this.canvas.height);
 
-          // 눈 영역 감지 및 추적
-          const eyeRegions = this.detectAndTrackEyes(data, this.canvas.width, this.canvas.height);
+          // 개선된 눈 영역 감지
+          let eyeRegions = null;
+          if (this.settings.debugMode || this.eyeTrackingState.isCalibrated) {
+            eyeRegions = this.detectEyesWithTracking(data, this.canvas.width, this.canvas.height);
+          }
 
           // 시선 방향 결정 (밝기 변화 기반)
           const currentBrightness = (regions.top + regions.bottom + regions.left + regions.right) / 4;
@@ -318,8 +332,8 @@ class GazeScroll {
             this.performScroll();
           }
 
-          // 디버그 모드에서 정보 전송 (항상 전송해서 실시간 표시)
-          if (this.settings.debugMode || this.eyeTrackingState.isCalibrated) {
+          // 디버그 모드에서 정보 전송 (최적화: 3프레임에 1번만 전송)
+          if ((this.settings.debugMode || this.eyeTrackingState.isCalibrated) && frameCount % 3 === 0) {
             this.sendDebugInfo(regions, currentBrightness, previousBrightness, gazeY, screenHeight, eyeRegions);
           }
 
@@ -587,318 +601,73 @@ class GazeScroll {
   }
 
   findFaceRegion(data, width, height) {
-    // 개선된 얼굴 영역 감지 (HSV 기반 피부톤 감지 + 모폴로지 연산)
-    const skinMap = new Uint8Array(width * height);
-
-    // 1단계: HSV 기반 피부톤 감지
+    // 최적화된 간단한 얼굴 영역 감지 (RGB 기반으로 간소화)
     let skinPixels = 0;
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
+    let centerX = 0, centerY = 0;
+    const skinMap = new Uint8Array(width * height); // 디버그용 피부톤 맵
+
+    // 중앙 영역 샘플링으로 성능 개선 (전체 픽셀 대신 1/4만 검사)
+    const step = 2; // 2픽셀마다 검사하여 성능 개선
+    for (let y = step; y < height - step; y += step) {
+      for (let x = step; x < width - step; x += step) {
         const idx = (y * width + x) * 4;
-        const r = data[idx] / 255;
-        const g = data[idx + 1] / 255;
-        const b = data[idx + 2] / 255;
+        const r = data[idx];
+        const g = data[idx + 1];
+        const b = data[idx + 2];
 
-        // RGB to HSV 변환
-        const max = Math.max(r, g, b);
-        const min = Math.min(r, g, b);
-        const delta = max - min;
-
-        let h, s, v;
-        v = max;
-
-        if (delta === 0) {
-          h = 0;
-          s = 0;
-        } else {
-          s = delta / max;
-          if (max === r) {
-            h = ((g - b) / delta + (g < b ? 6 : 0)) / 6;
-          } else if (max === g) {
-            h = ((b - r) / delta + 2) / 6;
-          } else {
-            h = ((r - g) / delta + 4) / 6;
-          }
-        }
-
-        // HSV 기반 피부톤 감지 (여러 범위 고려)
-        const isSkin = this.isSkinTone(h, s, v) &&
-                      this.validateSkinPixel(data, width, height, x, y);
+        // 간소화된 피부톤 감지 (RGB 기반)
+        const isSkin = r > 60 && g > 40 && b > 20 &&
+                      r > g && r > b &&
+                      Math.abs(r - g) < 50 &&
+                      r / Math.max(g, b) < 2.5;
 
         skinMap[y * width + x] = isSkin ? 1 : 0;
-        if (isSkin) skinPixels++;
+
+        if (isSkin) {
+          skinPixels++;
+          centerX += x;
+          centerY += y;
+        }
       }
     }
 
-    // 2단계: 노이즈 제거 (모폴로지 연산)
-    const cleanedSkinMap = this.morphologicalFilter(skinMap, width, height);
+    if (skinPixels > (width * height) / (step * step * 50)) { // 최소 피부톤 픽셀 수
+      centerX /= skinPixels;
+      centerY /= skinPixels;
 
-    // 3단계: 얼굴 영역 추출
-    const faceCandidates = this.extractFaceCandidates(cleanedSkinMap, width, height);
-
-    if (faceCandidates.length > 0) {
-      // 가장 큰 얼굴 영역 선택
-      const bestFace = faceCandidates.reduce((best, current) =>
-        current.area > best.area ? current : best
-      );
-
-      // 얼굴 영역을 조금 더 넓게 확장
-      const margin = 0.1; // 10% 마진
-      const expandedFace = {
-        x: Math.max(0, bestFace.x - bestFace.width * margin),
-        y: Math.max(0, bestFace.y - bestFace.height * margin),
-        width: Math.min(width - bestFace.x, bestFace.width * (1 + 2 * margin)),
-        height: Math.min(height - bestFace.y, bestFace.height * (1 + 2 * margin))
+      // 얼굴 크기 추정 (화면 크기의 1/3 정도로 가정)
+      const faceSize = Math.min(width, height) / 3;
+      const faceRegion = {
+        x: Math.max(0, centerX - faceSize / 2),
+        y: Math.max(0, centerY - faceSize / 2),
+        width: Math.min(width - (centerX - faceSize / 2), faceSize),
+        height: Math.min(height - (centerY - faceSize / 2), faceSize),
+        skinMap: skinMap, // 디버그용 피부톤 맵 추가
+        skinPixels: skinPixels,
+        totalSamples: (width * height) / (step * step)
       };
 
-      console.log(`얼굴 영역 발견: (${expandedFace.x}, ${expandedFace.y}) ${expandedFace.width}x${expandedFace.height}`);
-      return expandedFace;
+      return faceRegion;
     }
 
-    // 얼굴을 찾지 못한 경우 더 넓은 범위에서 재시도
-    console.log('얼굴을 찾지 못하여 재시도...');
-    return this.findFaceFallback(data, width, height);
-  }
-
-  isSkinTone(h, s, v) {
-    // HSV 기반 피부톤 감지 (여러 인종 고려)
-    const skinRanges = [
-      // 밝은 피부톤
-      { h: [0.02, 0.15], s: [0.15, 0.8], v: [0.3, 1.0] },
-      // 중간톤 피부
-      { h: [0.01, 0.20], s: [0.1, 0.9], v: [0.2, 0.9] },
-      // 어두운 피부톤
-      { h: [0.00, 0.25], s: [0.1, 1.0], v: [0.1, 0.8] }
-    ];
-
-    return skinRanges.some(range =>
-      h >= range.h[0] && h <= range.h[1] &&
-      s >= range.s[0] && s <= range.s[1] &&
-      v >= range.v[0] && v <= range.v[1]
-    );
-  }
-
-  validateSkinPixel(data, width, height, x, y) {
-    // 주변 픽셀과의 일관성 검증
-    const kernelSize = 3;
-    const halfKernel = Math.floor(kernelSize / 2);
-    let skinNeighbors = 0;
-    let totalNeighbors = 0;
-
-    for (let ky = -halfKernel; ky <= halfKernel; ky++) {
-      for (let kx = -halfKernel; kx <= halfKernel; kx++) {
-        const nx = x + kx;
-        const ny = y + ky;
-
-        if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-          const idx = (ny * width + nx) * 4;
-          const r = data[idx] / 255;
-          const g = data[idx + 1] / 255;
-          const b = data[idx + 2] / 255;
-
-          // 간단한 RGB 기반 피부톤 확인
-          if (r > 0.3 && g > 0.2 && b > 0.15 &&
-              Math.max(r, g, b) - Math.min(r, g, b) < 0.3) {
-            skinNeighbors++;
-          }
-          totalNeighbors++;
-        }
-      }
-    }
-
-    // 주변 픽셀의 50% 이상이 피부톤이어야 함
-    return (skinNeighbors / totalNeighbors) > 0.5;
-  }
-
-  morphologicalFilter(skinMap, width, height) {
-    // 간단한 모폴로지 닫기 연산 (노이즈 제거)
-    const result = new Uint8Array(width * height);
-    const kernel = [
-      [0, 1, 0],
-      [1, 1, 1],
-      [0, 1, 0]
-    ];
-
-    // 팽창
-    for (let y = 1; y < height - 1; y++) {
-      for (let x = 1; x < width - 1; x++) {
-        let hasSkin = false;
-        for (let ky = -1; ky <= 1; ky++) {
-          for (let kx = -1; kx <= 1; kx++) {
-            if (kernel[ky + 1][kx + 1] &&
-                skinMap[(y + ky) * width + (x + kx)]) {
-              hasSkin = true;
-              break;
-            }
-          }
-          if (hasSkin) break;
-        }
-        result[y * width + x] = hasSkin ? 1 : 0;
-      }
-    }
-
-    return result;
-  }
-
-  extractFaceCandidates(skinMap, width, height) {
-    const candidates = [];
-    const visited = new Uint8Array(width * height);
-
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const idx = y * width + x;
-        if (skinMap[idx] && !visited[idx]) {
-          const region = this.floodFill(skinMap, visited, width, height, x, y);
-          if (region.area > 1000) { // 최소 영역 크기
-            candidates.push(region);
-          }
-        }
-      }
-    }
-
-    return candidates;
-  }
-
-  floodFill(skinMap, visited, width, height, startX, startY) {
-    const stack = [{x: startX, y: startY}];
-    let minX = startX, maxX = startX, minY = startY, maxY = startY;
-    let area = 0;
-
-    while (stack.length > 0) {
-      const {x, y} = stack.pop();
-      const idx = y * width + x;
-
-      if (x < 0 || x >= width || y < 0 || y >= height ||
-          visited[idx] || !skinMap[idx]) {
-        continue;
-      }
-
-      visited[idx] = 1;
-      area++;
-      minX = Math.min(minX, x);
-      maxX = Math.max(maxX, x);
-      minY = Math.min(minY, y);
-      maxY = Math.max(maxY, y);
-
-      // 4방향으로 확장
-      stack.push({x: x + 1, y});
-      stack.push({x: x - 1, y});
-      stack.push({x, y: y + 1});
-      stack.push({x, y: y - 1});
-    }
-
-    return {
-      x: minX,
-      y: minY,
-      width: maxX - minX + 1,
-      height: maxY - minY + 1,
-      area
-    };
-  }
-
-  findFaceFallback(data, width, height) {
-    // 얼굴을 찾지 못한 경우 더 넓은 범위에서 재시도
-    // 밝기 조절을 통해 다양한 조명 조건에 대응
-    const brightnessLevels = [0.7, 1.0, 1.3];
-
-    for (const brightness of brightnessLevels) {
-      const adjustedData = this.adjustBrightness(data, brightness);
-      const skinMap = new Uint8Array(width * height);
-
-      let skinPixels = 0;
-      for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
-          const idx = (y * width + x) * 4;
-          const r = adjustedData[idx] / 255;
-          const g = adjustedData[idx + 1] / 255;
-          const b = adjustedData[idx + 2] / 255;
-
-          // 더 느슨한 피부톤 조건
-          const isSkin = r > 0.2 && g > 0.15 && b > 0.1 &&
-                        Math.max(r, g, b) - Math.min(r, g, b) < 0.4;
-
-          skinMap[y * width + x] = isSkin ? 1 : 0;
-          if (isSkin) skinPixels++;
-        }
-      }
-
-      if (skinPixels > width * height * 0.05) { // 5% 이상
-        // 중앙에 가까운 영역 우선 선택
-        const centerX = width / 2;
-        const centerY = height / 2;
-
-        let bestX = 0, bestY = 0, bestWidth = 0, bestHeight = 0;
-        let minDistance = Infinity;
-
-        // 간단한 그리드 검색으로 얼굴 영역 추정
-        const gridSize = 4;
-        for (let gy = 0; gy < gridSize; gy++) {
-          for (let gx = 0; gx < gridSize; gx++) {
-            const x = Math.floor((gx / gridSize) * width);
-            const y = Math.floor((gy / gridSize) * height);
-            const w = Math.floor(width / gridSize);
-            const h = Math.floor(height / gridSize);
-
-            let regionSkinPixels = 0;
-            for (let ry = y; ry < y + h && ry < height; ry++) {
-              for (let rx = x; rx < x + w && rx < width; rx++) {
-                if (skinMap[ry * width + rx]) {
-                  regionSkinPixels++;
-                }
-              }
-            }
-
-            if (regionSkinPixels > (w * h * 0.3)) {
-              const distance = Math.sqrt(
-                Math.pow(x + w/2 - centerX, 2) +
-                Math.pow(y + h/2 - centerY, 2)
-              );
-
-              if (distance < minDistance) {
-                minDistance = distance;
-                bestX = x;
-                bestY = y;
-                bestWidth = w;
-                bestHeight = h;
-              }
-            }
-          }
-        }
-
-        if (bestWidth > 0) {
-          console.log(`Fallback 얼굴 영역 발견 (밝기: ${brightness}): (${bestX}, ${bestY}) ${bestWidth}x${bestHeight}`);
-          return {
-            x: bestX,
-            y: bestY,
-            width: bestWidth,
-            height: bestHeight
-          };
-        }
-      }
-    }
-
-    // 최종 fallback: 중앙 영역 반환
-    console.log('얼굴을 찾지 못하여 중앙 영역으로 설정');
+    // 얼굴을 찾지 못한 경우 중앙 영역 반환 (fallback)
     return {
       x: Math.floor(width * 0.25),
       y: Math.floor(height * 0.25),
       width: Math.floor(width * 0.5),
-      height: Math.floor(height * 0.5)
+      height: Math.floor(height * 0.5),
+      skinMap: skinMap, // 디버그용 피부톤 맵 추가
+      skinPixels: skinPixels,
+      totalSamples: (width * height) / (step * step)
     };
   }
 
-  adjustBrightness(data, factor) {
-    const adjusted = new Uint8ClampedArray(data.length);
-    for (let i = 0; i < data.length; i += 4) {
-      adjusted[i] = Math.min(255, data[i] * factor);     // R
-      adjusted[i + 1] = Math.min(255, data[i + 1] * factor); // G
-      adjusted[i + 2] = Math.min(255, data[i + 2] * factor); // B
-      adjusted[i + 3] = data[i + 3]; // A
-    }
-    return adjusted;
-  }
+  // 불필요한 함수들 제거됨 (성능 최적화)
+
+  // 불필요한 함수들 제거됨 (성능 최적화)
 
   findEyesInFaceRegion(data, width, height, faceRegion) {
+    // 더 넓은 영역에서 눈을 검색하는 간단한 방법
     const eyeRegions = {
       leftEye: { x: 0, y: 0, width: 0, height: 0, confidence: 0 },
       rightEye: { x: 0, y: 0, width: 0, height: 0, confidence: 0 }
@@ -906,402 +675,106 @@ class GazeScroll {
 
     if (!faceRegion) return eyeRegions;
 
-    // 1단계: 얼굴 영역에서 직접 눈 특징 추출 (확대 없이 1배율로)
-    const eyeFeatures = this.extractEyeFeaturesDirect(data, width, height, faceRegion);
+    // 얼굴 영역의 상단 2/3 영역에서 눈을 검색 (더 넓은 범위)
+    const searchTop = faceRegion.y;
+    const searchBottom = faceRegion.y + faceRegion.height * 0.6;
+    const searchLeft = faceRegion.x;
+    const searchRight = faceRegion.x + faceRegion.width;
 
-    // 2단계: 눈 위치 정제 및 검증
-    if (eyeFeatures.leftEye && eyeFeatures.rightEye) {
-      eyeRegions.leftEye = this.refineEyePositionDirect(
-        eyeFeatures.leftEye, faceRegion, width, height, data
-      );
-      eyeRegions.rightEye = this.refineEyePositionDirect(
-        eyeFeatures.rightEye, faceRegion, width, height, data
-      );
+    // 어두운 영역 찾기 (눈동자 후보)
+    const darkRegions = [];
 
-      // 눈 간 거리 검증 (얼굴 크기에 비례)
-      const eyeDistance = Math.abs(eyeRegions.rightEye.x - eyeRegions.leftEye.x);
-      const expectedDistance = faceRegion.width * 0.25; // 얼굴 너비의 25%
+    // 4x4 그리드로 검색하여 성능 개선
+    const gridSize = 4;
+    const cellWidth = (searchRight - searchLeft) / gridSize;
+    const cellHeight = (searchBottom - searchTop) / gridSize;
 
-      if (eyeDistance < expectedDistance * 0.5 || eyeDistance > expectedDistance * 1.5) {
-        // 눈 간 거리가 부자연스러운 경우 재탐색
-        console.log(`눈 간 거리 이상: ${eyeDistance}px (예상: ${expectedDistance}px)`);
-        return this.findEyesFallback(data, width, height, faceRegion);
+    for (let gy = 0; gy < gridSize; gy++) {
+      for (let gx = 0; gx < gridSize; gx++) {
+        const cellX = searchLeft + gx * cellWidth;
+        const cellY = searchTop + gy * cellHeight;
+
+        if (cellX >= 0 && cellY >= 0 && cellX + cellWidth < width && cellY + cellHeight < height) {
+          const avgBrightness = this.getRegionBrightness(data, width, height,
+            cellX, cellY, cellWidth, cellHeight);
+
+          // 어두운 영역을 눈 후보로 저장 (더 낮은 임계값으로 변경)
+          if (avgBrightness < 150) {
+            darkRegions.push({
+              x: cellX,
+              y: cellY,
+              width: cellWidth,
+              height: cellHeight,
+              brightness: avgBrightness
+            });
+          }
+        }
+      }
+    }
+
+    // 가장 어두운 두 영역을 눈으로 선택
+    if (darkRegions.length >= 2) {
+      darkRegions.sort((a, b) => a.brightness - b.brightness);
+
+      // 얼굴 중심을 기준으로 좌우 분류
+      const faceCenterX = faceRegion.x + faceRegion.width / 2;
+
+      const leftCandidates = darkRegions.filter(region => region.x + region.width / 2 < faceCenterX);
+      const rightCandidates = darkRegions.filter(region => region.x + region.width / 2 > faceCenterX);
+
+      if (leftCandidates.length > 0) {
+        const leftEye = leftCandidates[0];
+        eyeRegions.leftEye = {
+          x: leftEye.x,
+          y: leftEye.y,
+          width: leftEye.width,
+          height: leftEye.height,
+          confidence: Math.max(0.1, 1 - leftEye.brightness / 255)
+        };
       }
 
-      console.log(`눈 발견: 왼쪽(${eyeRegions.leftEye.x}, ${eyeRegions.leftEye.y}), 오른쪽(${eyeRegions.rightEye.x}, ${eyeRegions.rightEye.y})`);
-    } else {
-      // 눈을 찾지 못한 경우 fallback
-      console.log('얼굴 영역에서 눈을 찾지 못하여 fallback 모드 실행');
-      return this.findEyesFallback(data, width, height, faceRegion);
+      if (rightCandidates.length > 0) {
+        const rightEye = rightCandidates[0];
+        eyeRegions.rightEye = {
+          x: rightEye.x,
+          y: rightEye.y,
+          width: rightEye.width,
+          height: rightEye.height,
+          confidence: Math.max(0.1, 1 - rightEye.brightness / 255)
+        };
+      }
     }
 
     return eyeRegions;
   }
 
-  // 확대 기능 제거 - 이제 사용하지 않음
-
-  extractEyeFeaturesDirect(data, width, height, faceRegion) {
-    const eyeFeatures = { leftEye: null, rightEye: null };
-
-    // 얼굴 영역에서 직접 눈 특징 검색 (1배율)
-    // 1. 어두운 영역 (눈동자) 검색
-    const darkRegions = this.findDarkRegions(data, width, height, faceRegion);
-
-    // 2. 밝은 영역 (눈 흰자) 검색
-    const brightRegions = this.findBrightRegions(data, width, height, faceRegion);
-
-    // 얼굴 중심 기준으로 눈 위치 추정
-    const faceCenterX = faceRegion.x + faceRegion.width / 2;
-    const eyeLevelY = faceRegion.y + faceRegion.height * 0.35; // 얼굴 높이의 35% (눈 위치)
-    const eyeSpacing = faceRegion.width * 0.25; // 눈 사이 간격
-
-    // 왼쪽 눈 후보 영역들
-    const leftEyeCandidates = [];
-    const rightEyeCandidates = [];
-
-    // 어두운 영역과 밝은 영역의 조합으로 눈 특징 검출
-    darkRegions.forEach(darkRegion => {
-      brightRegions.forEach(brightRegion => {
-        // 어두운 영역 안에 밝은 영역이 있는지 확인 (눈동자 주변에 흰자)
-        if (this.isRegionContained(darkRegion, brightRegion)) {
-          const eyeCandidate = {
-            x: darkRegion.x,
-            y: darkRegion.y,
-            width: darkRegion.width,
-            height: darkRegion.height,
-            confidence: (darkRegion.confidence + brightRegion.confidence) / 2,
-            type: 'eye'
-          };
-
-          // 얼굴 중심으로부터의 거리에 따라 좌/우 분류
-          const eyeCenterX = eyeCandidate.x + eyeCandidate.width / 2;
-
-          if (eyeCenterX < faceCenterX - eyeSpacing * 0.3) {
-            leftEyeCandidates.push(eyeCandidate);
-          } else if (eyeCenterX > faceCenterX + eyeSpacing * 0.3) {
-            rightEyeCandidates.push(eyeCandidate);
-          }
-        }
-      });
-    });
-
-    // 가장 신뢰도가 높은 눈 선택
-    if (leftEyeCandidates.length > 0) {
-      eyeFeatures.leftEye = leftEyeCandidates.reduce((best, current) =>
-        current.confidence > best.confidence ? current : best
-      );
-    }
-
-    if (rightEyeCandidates.length > 0) {
-      eyeFeatures.rightEye = rightEyeCandidates.reduce((best, current) =>
-        current.confidence > best.confidence ? current : best
-      );
-    }
-
-    return eyeFeatures;
-  }
-
-  findDarkRegions(data, width, height, faceRegion) {
-    const regions = [];
-    const threshold = 80; // 어두운 픽셀 임계값
-    const minRegionSize = 30; // 얼굴 영역이므로 최소 크기 감소
-
-    // 얼굴 영역 내에서만 검색
-    const startX = Math.max(0, faceRegion.x);
-    const endX = Math.min(width, faceRegion.x + faceRegion.width);
-    const startY = Math.max(0, faceRegion.y);
-    const endY = Math.min(height, faceRegion.y + faceRegion.height);
-
-    for (let y = startY; y < endY; y++) {
-      for (let x = startX; x < endX; x++) {
-        const idx = (y * width + x) * 4;
-        const brightness = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
-
-        if (brightness < threshold) {
-          const region = this.growRegion(data, width, height, x, y, threshold, 'dark', faceRegion);
-          if (region && region.size >= minRegionSize) {
-            regions.push(region);
-          }
-        }
-      }
-    }
-
-    return regions;
-  }
-
-  findBrightRegions(data, width, height, faceRegion) {
-    const regions = [];
-    const threshold = 180; // 밝은 픽셀 임계값
-    const minRegionSize = 50; // 얼굴 영역이므로 최소 크기 감소
-
-    // 얼굴 영역 내에서만 검색
-    const startX = Math.max(0, faceRegion.x);
-    const endX = Math.min(width, faceRegion.x + faceRegion.width);
-    const startY = Math.max(0, faceRegion.y);
-    const endY = Math.min(height, faceRegion.y + faceRegion.height);
-
-    for (let y = startY; y < endY; y++) {
-      for (let x = startX; x < endX; x++) {
-        const idx = (y * width + x) * 4;
-        const brightness = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
-
-        if (brightness > threshold) {
-          const region = this.growRegion(data, width, height, x, y, threshold, 'bright', faceRegion);
-          if (region && region.size >= minRegionSize) {
-            regions.push(region);
-          }
-        }
-      }
-    }
-
-    return regions;
-  }
-
-  // findEdgeRegions는 1배율 방식에서는 사용하지 않음
-
-  growRegion(data, width, height, startX, startY, threshold, type, faceRegion = null) {
-    const visited = new Uint8Array(width * height);
-    const stack = [{x: startX, y: startY}];
-    let minX = startX, maxX = startX, minY = startY, maxY = startY;
-    let size = 0;
+  getRegionBrightness(data, width, height, x, y, w, h) {
+    // 지정된 영역의 평균 밝기 계산
     let totalBrightness = 0;
-
-    // 얼굴 영역 제한 설정
-    const limitX = faceRegion ? {
-      min: Math.max(0, faceRegion.x),
-      max: Math.min(width, faceRegion.x + faceRegion.width)
-    } : { min: 0, max: width };
-
-    const limitY = faceRegion ? {
-      min: Math.max(0, faceRegion.y),
-      max: Math.min(height, faceRegion.y + faceRegion.height)
-    } : { min: 0, max: height };
-
-    while (stack.length > 0) {
-      const {x, y} = stack.pop();
-      const idx = y * width + x;
-
-      // 얼굴 영역 제한 확인
-      if (x < limitX.min || x >= limitX.max || y < limitY.min || y >= limitY.max ||
-          x < 0 || x >= width || y < 0 || y >= height || visited[idx]) {
-        continue;
-      }
-
-      const pixelIdx = (y * width + x) * 4;
-      const brightness = (data[pixelIdx] + data[pixelIdx + 1] + data[pixelIdx + 2]) / 3;
-
-      let isMatch = false;
-      switch (type) {
-        case 'dark':
-          isMatch = brightness < threshold;
-          break;
-        case 'bright':
-          isMatch = brightness > threshold;
-          break;
-        case 'edge':
-          // 경계 검출의 경우 주변과의 차이로 판단
-          isMatch = this.isEdgePixel(data, width, height, x, y, threshold);
-          break;
-      }
-
-      if (!isMatch) continue;
-
-      visited[idx] = 1;
-      size++;
-      totalBrightness += brightness;
-      minX = Math.min(minX, x);
-      maxX = Math.max(maxX, x);
-      minY = Math.min(minY, y);
-      maxY = Math.max(maxY, y);
-
-      // 얼굴 영역 내에서만 확장
-      stack.push({x: x + 1, y});
-      stack.push({x: x - 1, y});
-      stack.push({x, y: y + 1});
-      stack.push({x, y: y - 1});
-    }
-
-    if (size === 0) return null;
-
-    return {
-      x: minX,
-      y: minY,
-      width: maxX - minX + 1,
-      height: maxY - minY + 1,
-      size,
-      confidence: Math.min(1, size / 200), // 크기에 따른 신뢰도 (얼굴 영역이므로 감소)
-      avgBrightness: totalBrightness / size
-    };
-  }
-
-  isEdgePixel(data, width, height, x, y, threshold) {
-    if (x <= 0 || x >= width - 1 || y <= 0 || y >= height - 1) return false;
-
-    const idx = (y * width + x) * 4;
-    const brightness = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
-
-    const upIdx = ((y - 1) * width + x) * 4;
-    const downIdx = ((y + 1) * width + x) * 4;
-    const leftIdx = (y * width + (x - 1)) * 4;
-    const rightIdx = (y * width + (x + 1)) * 4;
-
-    const upBrightness = (data[upIdx] + data[upIdx + 1] + data[upIdx + 2]) / 3;
-    const downBrightness = (data[downIdx] + data[downIdx + 1] + data[downIdx + 2]) / 3;
-    const leftBrightness = (data[leftIdx] + data[leftIdx + 1] + data[leftIdx + 2]) / 3;
-    const rightBrightness = (data[rightIdx] + data[rightIdx + 1] + data[rightIdx + 2]) / 3;
-
-    const verticalDiff = Math.abs(upBrightness - downBrightness);
-    const horizontalDiff = Math.abs(leftBrightness - rightBrightness);
-
-    return Math.max(verticalDiff, horizontalDiff) > threshold;
-  }
-
-  isRegionContained(outerRegion, innerRegion) {
-    return innerRegion.x >= outerRegion.x &&
-           innerRegion.y >= outerRegion.y &&
-           (innerRegion.x + innerRegion.width) <= (outerRegion.x + outerRegion.width) &&
-           (innerRegion.y + innerRegion.height) <= (outerRegion.y + outerRegion.height);
-  }
-
-  refineEyePositionDirect(eyeCandidate, faceRegion, width, height, data) {
-    // 눈 영역 내에서 가장 어두운 점 찾기 (눈동자 중심) - 1배율로 직접 처리
-    let darkestX = eyeCandidate.x;
-    let darkestY = eyeCandidate.y;
-    let darkestBrightness = 255;
-
-    const searchRadius = 3; // 1배율이므로 검색 반경 감소
-    for (let dy = -searchRadius; dy <= searchRadius; dy++) {
-      for (let dx = -searchRadius; dx <= searchRadius; dx++) {
-        const x = eyeCandidate.x + eyeCandidate.width / 2 + dx;
-        const y = eyeCandidate.y + eyeCandidate.height / 2 + dy;
-
-        if (x >= 0 && x < width && y >= 0 && y < height) {
-          const idx = (y * width + x) * 4;
-          const brightness = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
-
-          if (brightness < darkestBrightness) {
-            darkestBrightness = brightness;
-            darkestX = x;
-            darkestY = y;
-          }
-        }
-      }
-    }
-
-    return {
-      x: darkestX - eyeCandidate.width / 4,
-      y: darkestY - eyeCandidate.height / 4,
-      width: eyeCandidate.width / 2,
-      height: eyeCandidate.height / 2,
-      confidence: eyeCandidate.confidence
-    };
-  }
-
-  findEyesFallback(data, width, height, faceRegion) {
-    // 눈을 찾지 못한 경우 기존 방식으로 fallback
-    const eyeRegions = {
-      leftEye: { x: 0, y: 0, width: 0, height: 0, confidence: 0 },
-      rightEye: { x: 0, y: 0, width: 0, height: 0, confidence: 0 }
-    };
-
-    // 얼굴 영역 내에서 눈 위치 추정 (기존 방식)
-    const faceCenterX = faceRegion.x + faceRegion.width / 2;
-    const eyeY = faceRegion.y + faceRegion.height * 0.35;
-    const eyeWidth = Math.floor(faceRegion.width * 0.15);
-    const eyeHeight = Math.floor(faceRegion.height * 0.12);
-    const eyeSpacing = Math.floor(faceRegion.width * 0.2);
-
-    const leftEyeX = Math.floor(faceCenterX - eyeSpacing / 2 - eyeWidth / 2);
-    const rightEyeX = Math.floor(faceCenterX + eyeSpacing / 2 - eyeWidth / 2);
-
-    eyeRegions.leftEye = this.analyzeEyeRegion(data, width, height,
-      leftEyeX, eyeY, eyeWidth, eyeHeight);
-    eyeRegions.rightEye = this.analyzeEyeRegion(data, width, height,
-      rightEyeX, eyeY, eyeWidth, eyeHeight);
-
-    return eyeRegions;
-  }
-
-  analyzeEyeRegion(data, width, height, eyeX, eyeY, eyeWidth, eyeHeight) {
-    let totalBrightness = 0;
-    let darkPixels = 0;
-    let edgePixels = 0;
     let pixelCount = 0;
 
-    // 눈 영역 경계 검출 및 밝기 분석
-    for (let y = eyeY; y < eyeY + eyeHeight; y++) {
-      for (let x = eyeX; x < eyeX + eyeWidth; x++) {
-        if (x >= 0 && x < width && y >= 0 && y < height) {
-          const idx = (y * width + x) * 4;
-          const r = data[idx];
-          const g = data[idx + 1];
-          const b = data[idx + 2];
-          const brightness = (r + g + b) / 3;
+    const startX = Math.max(0, Math.floor(x));
+    const startY = Math.max(0, Math.floor(y));
+    const endX = Math.min(width, Math.floor(x + w));
+    const endY = Math.min(height, Math.floor(y + h));
 
-          totalBrightness += brightness;
-          pixelCount++;
-
-          // 어두운 픽셀 (눈동자) 카운트
-          if (brightness < 100) {
-            darkPixels++;
-          }
-
-          // 경계 픽셀 검출 (주변 픽셀과의 밝기 차이)
-          if (x > 0 && y > 0 && x < width - 1 && y < height - 1) {
-            const upIdx = ((y - 1) * width + x) * 4;
-            const downIdx = ((y + 1) * width + x) * 4;
-            const leftIdx = (y * width + (x - 1)) * 4;
-            const rightIdx = (y * width + (x + 1)) * 4;
-
-            const upBrightness = (data[upIdx] + data[upIdx + 1] + data[upIdx + 2]) / 3;
-            const downBrightness = (data[downIdx] + data[downIdx + 1] + data[downIdx + 2]) / 3;
-            const leftBrightness = (data[leftIdx] + data[leftIdx + 1] + data[leftIdx + 2]) / 3;
-            const rightBrightness = (data[rightIdx] + data[rightIdx + 1] + data[rightIdx + 2]) / 3;
-
-            const verticalDiff = Math.abs(upBrightness - downBrightness);
-            const horizontalDiff = Math.abs(leftBrightness - rightBrightness);
-
-            if (verticalDiff > 30 || horizontalDiff > 30) {
-              edgePixels++;
-            }
-          }
-        }
+    for (let cy = startY; cy < endY; cy += 2) { // 2픽셀마다 샘플링
+      for (let cx = startX; cx < endX; cx += 2) {
+        const idx = (cy * width + cx) * 4;
+        const brightness = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
+        totalBrightness += brightness;
+        pixelCount++;
       }
     }
 
-    if (pixelCount === 0) {
-      return { x: eyeX, y: eyeY, width: eyeWidth, height: eyeHeight, confidence: 0 };
-    }
+    return pixelCount > 0 ? totalBrightness / pixelCount : 255;
+  }
 
-    const avgBrightness = totalBrightness / pixelCount;
-    const darkRatio = darkPixels / pixelCount;
-    const edgeRatio = edgePixels / pixelCount;
-
-    // 눈 영역 신뢰도 계산
-    let confidence = 0;
-
-    // 밝기가 적당한 수준인지 (너무 밝거나 어둡지 않은지)
-    if (avgBrightness > 80 && avgBrightness < 200) {
-      confidence += 0.3;
-    }
-
-    // 어두운 영역 비율이 적당한지 (눈동자가 있는지)
-    if (darkRatio > 0.1 && darkRatio < 0.5) {
-      confidence += 0.3;
-    }
-
-    // 경계가 선명한지
-    if (edgeRatio > 0.1) {
-      confidence += 0.4;
-    }
-
-    return {
-      x: eyeX,
-      y: eyeY,
-      width: eyeWidth,
-      height: eyeHeight,
-      confidence: Math.min(confidence, 1)
-    };
+  // 개선된 눈 감지 (더 정확한 그리드 기반 방식)
+  detectEyesWithTracking(data, width, height) {
+    // tracking.js 대신 개선된 기존 알고리즘 사용
+    const faceRegion = this.findFaceRegion(data, width, height);
+    return this.findEyesInFaceRegion(data, width, height, faceRegion);
   }
 
   estimateGazeY(regions, screenHeight) {
@@ -1385,7 +858,10 @@ class GazeScroll {
         x: currentFaceRegion.x,
         y: currentFaceRegion.y,
         width: currentFaceRegion.width,
-        height: currentFaceRegion.height
+        height: currentFaceRegion.height,
+        skinPixels: currentFaceRegion.skinPixels,
+        totalSamples: currentFaceRegion.totalSamples,
+        skinPercentage: ((currentFaceRegion.skinPixels / currentFaceRegion.totalSamples) * 100).toFixed(1)
       } : null,
       eyeTracking: {
         quality: eyeTrackingQuality,
@@ -1399,14 +875,14 @@ class GazeScroll {
             y: eyeRegions.leftEye.y,
             width: eyeRegions.leftEye.width,
             height: eyeRegions.leftEye.height,
-            confidence: eyeRegions.leftEye.confidence.toFixed(3)
+            confidence: eyeRegions.leftEye.confidence
           },
           rightEye: {
             x: eyeRegions.rightEye.x,
             y: eyeRegions.rightEye.y,
             width: eyeRegions.rightEye.width,
             height: eyeRegions.rightEye.height,
-            confidence: eyeRegions.rightEye.confidence.toFixed(3)
+            confidence: eyeRegions.rightEye.confidence
           }
         } : null
       },
@@ -1418,10 +894,10 @@ class GazeScroll {
       }
     };
 
-    // 디버그 모드에서 캔버스 이미지 캡처
+    // 디버그 모드에서 캔버스 이미지 캡처 (항상 캡처하도록 수정)
     if (this.settings.debugMode && this.canvas) {
       try {
-        const imageData = this.canvas.toDataURL('image/jpeg', 0.5);
+        const imageData = this.canvas.toDataURL('image/jpeg', 0.8); // 품질 높임
         debugData.frameImage = imageData;
       } catch (error) {
         console.warn('디버그 이미지 캡처 실패:', error);
