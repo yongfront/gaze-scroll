@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gaze Scroll</title>
+    <style>
+      body {
+        width: 300px;
+        height: 650px;
+        margin: 0;
+        padding: 20px;
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+      }
+
+      .container {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+      }
+
+      h1 {
+        font-size: 24px;
+        margin: 0 0 20px 0;
+        text-align: center;
+        color: #fff;
+      }
+
+      .status-indicator {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 20px 0;
+        padding: 15px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(10px);
+      }
+
+      .status-dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        margin-right: 10px;
+        background: #ff6b6b;
+        transition: all 0.3s ease;
+      }
+
+      .status-dot.active {
+        background: #51cf66;
+        box-shadow: 0 0 10px rgba(81, 207, 102, 0.5);
+      }
+
+      .status-text {
+        font-size: 16px;
+        font-weight: 500;
+      }
+
+      .controls {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+      }
+
+      .control-group {
+        background: rgba(255, 255, 255, 0.1);
+        padding: 15px;
+        border-radius: 10px;
+        backdrop-filter: blur(10px);
+      }
+
+      .control-group h3 {
+        margin: 0 0 10px 0;
+        font-size: 14px;
+        color: #fff;
+        opacity: 0.9;
+      }
+
+      .toggle-btn {
+        width: 100%;
+        padding: 12px;
+        border: none;
+        border-radius: 8px;
+        background: #51cf66;
+        color: white;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+      }
+
+      .toggle-btn:hover {
+        background: #40c057;
+        transform: translateY(-2px);
+      }
+
+      .toggle-btn:disabled {
+        background: #868e96;
+        cursor: not-allowed;
+        transform: none;
+      }
+
+      .toggle-btn.active {
+        background: #ff6b6b;
+      }
+
+      .toggle-btn.active:hover {
+        background: #ff5252;
+      }
+
+      .settings {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .setting-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .setting-label {
+        font-size: 14px;
+        color: #fff;
+        opacity: 0.9;
+      }
+
+      .setting-input {
+        width: 80px;
+        padding: 5px 8px;
+        border: none;
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.2);
+        color: white;
+        font-size: 12px;
+      }
+
+      .setting-input:focus {
+        outline: none;
+        background: rgba(255, 255, 255, 0.3);
+      }
+
+      .setting-input::placeholder {
+        color: rgba(255, 255, 255, 0.6);
+      }
+
+      .calibration-btn {
+        width: 100%;
+        padding: 10px;
+        border: none;
+        border-radius: 8px;
+        background: #74b9ff;
+        color: white;
+        font-size: 14px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+      }
+
+      .calibration-btn:hover {
+        background: #0984e3;
+      }
+
+      .info-text {
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.7);
+        text-align: center;
+        margin-top: 15px;
+        line-height: 1.4;
+      }
+
+      /* 디버그 모드 스타일 */
+      .debug-panel {
+        margin-top: 20px;
+        padding: 15px;
+        background: rgba(0, 0, 0, 0.3);
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+
+      .debug-content {
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+        align-items: center;
+      }
+
+      .debug-video-container {
+        position: relative;
+        width: 250px;
+        height: 188px;
+        background: rgba(0, 0, 0, 0.5);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+
+      #debugCanvas {
+        width: 100% !important;
+        height: 100% !important;
+      }
+
+      .debug-info {
+        width: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .debug-metrics {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px 15px;
+        font-size: 11px;
+      }
+
+      .metric-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 4px 8px;
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 6px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+
+      .metric-label {
+        color: rgba(255, 255, 255, 0.8);
+        font-weight: 500;
+      }
+
+      .metric-value {
+        color: #fff;
+        font-weight: 600;
+        font-family: monospace;
+        background: rgba(255, 255, 255, 0.1);
+        padding: 2px 6px;
+        border-radius: 4px;
+        min-width: 40px;
+        text-align: center;
+      }
+
+      .debug-section {
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 8px;
+        padding: 8px;
+        margin-bottom: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+
+      .debug-section:last-child {
+        margin-bottom: 0;
+      }
+
+      .debug-controls {
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 8px;
+        padding: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px 15px;
+      }
+
+      .debug-controls .metric-item {
+        grid-column: 1 / -1;
+      }
+
+      .debug-controls .metric-item[style*="grid-column: 1 / -1"] {
+        grid-column: 1 / -1;
+        justify-content: center;
+      }
+
+      /* 작은 화면에서 그리드 레이아웃 조정 */
+      @media (max-width: 320px) {
+        .debug-metrics {
+          grid-template-columns: 1fr;
+        }
+        .debug-controls {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>👁️ Gaze Scroll</h1>
+
+      <div class="status-indicator">
+        <div class="status-dot" id="statusDot"></div>
+        <div class="status-text" id="statusText">준비 중...</div>
+      </div>
+
+      <div class="controls">
+        <div class="control-group">
+          <h3>시선 추적</h3>
+          <button class="toggle-btn" id="toggleBtn">시선 추적 시작</button>
+          <button class="calibration-btn" id="calibrateBtn">
+            눈 위치 보정
+          </button>
+        </div>
+
+        <div class="control-group">
+          <h3>스크롤 설정</h3>
+          <div class="settings">
+            <div class="setting-item">
+              <span class="setting-label">스크롤 속도</span>
+              <input
+                type="number"
+                class="setting-input"
+                id="scrollSpeed"
+                value="50"
+                min="10"
+                max="200"
+                step="10"
+              />
+            </div>
+            <div class="setting-item">
+              <span class="setting-label">상단 영역 (%)</span>
+              <input
+                type="number"
+                class="setting-input"
+                id="topZone"
+                value="30"
+                min="10"
+                max="45"
+                step="5"
+              />
+            </div>
+            <div class="setting-item">
+              <span class="setting-label">하단 영역 (%)</span>
+              <input
+                type="number"
+                class="setting-input"
+                id="bottomZone"
+                value="30"
+                min="10"
+                max="45"
+                step="5"
+              />
+            </div>
+            <div class="setting-item">
+              <label
+                style="
+                  display: flex;
+                  align-items: center;
+                  gap: 8px;
+                  cursor: pointer;
+                "
+              >
+                <input type="checkbox" id="debugMode" style="margin: 0" />
+                <span class="setting-label">디버그 모드</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="info-text">
+        화면 상단을 바라보면 위로 스크롤,<br />
+        하단을 바라보면 아래로 스크롤됩니다.<br /><br />
+        <small style="font-size: 11px; color: rgba(255, 255, 255, 0.6)">
+          ※ 카메라 권한 오류 시: 주소창 왼쪽 카메라 아이콘 클릭하여 허용
+        </small>
+      </div>
+
+      <!-- 디버그 모드 패널 -->
+      <div class="debug-panel" id="debugPanel" style="display: none">
+        <div class="debug-content">
+          <!-- 카메라 영역 -->
+          <div class="debug-video-container">
+            <video
+              id="debugVideo"
+              autoplay
+              playsinline
+              muted
+              style="width: 100%; border-radius: 8px"
+            ></video>
+            <canvas
+              id="debugCanvas"
+              style="position: absolute; top: 0; left: 0; pointer-events: none"
+            ></canvas>
+          </div>
+
+          <!-- 디버그 정보 영역 -->
+          <div class="debug-info">
+            <!-- 얼굴 감지 상태 -->
+            <div class="debug-section">
+              <div class="metric-item">
+                <span class="metric-label">얼굴 감지:</span>
+                <span class="metric-value" id="faceDetectionStatus"
+                  >대기중</span
+                >
+              </div>
+              <div class="metric-item">
+                <span class="metric-label">눈 추적 품질:</span>
+                <span class="metric-value" id="eyeTrackingQuality">0.0</span>
+              </div>
+            </div>
+
+            <!-- 시선 및 밝기 정보 -->
+            <div class="debug-section">
+              <div class="metric-item">
+                <span class="metric-label">시선 위치:</span>
+                <span class="metric-value" id="gazePosition">중앙</span>
+              </div>
+              <div class="metric-item">
+                <span class="metric-label">밝기 차이:</span>
+                <span class="metric-value" id="brightnessDiff">0.00</span>
+              </div>
+              <div class="metric-item">
+                <span class="metric-label">상단 밝기:</span>
+                <span class="metric-value" id="topBrightness">0.00</span>
+              </div>
+              <div class="metric-item">
+                <span class="metric-label">하단 밝기:</span>
+                <span class="metric-value" id="bottomBrightness">0.00</span>
+              </div>
+            </div>
+
+            <!-- 스크롤 정보 -->
+            <div class="debug-section">
+              <div class="metric-item">
+                <span class="metric-label">스크롤 방향:</span>
+                <span class="metric-value" id="scrollDirection">정지</span>
+              </div>
+              <div class="metric-item">
+                <span class="metric-label">가속도:</span>
+                <span class="metric-value" id="acceleration">0.0</span>
+              </div>
+            </div>
+
+            <!-- 캘리브레이션 및 추적 정보 -->
+            <div class="debug-section">
+              <div class="metric-item">
+                <span class="metric-label">캘리브레이션:</span>
+                <span class="metric-value" id="calibrationProgress">0/30</span>
+              </div>
+              <div class="metric-item">
+                <span class="metric-label">눈 간 거리:</span>
+                <span class="metric-value" id="eyeDistance">0px</span>
+              </div>
+              <div class="metric-item">
+                <span class="metric-label">왼쪽 눈 신뢰도:</span>
+                <span class="metric-value" id="leftEyeConfidence">0.0</span>
+              </div>
+              <div class="metric-item">
+                <span class="metric-label">오른쪽 눈 신뢰도:</span>
+                <span class="metric-value" id="rightEyeConfidence">0.0</span>
+              </div>
+            </div>
+
+            <!-- 컨트롤 영역 -->
+            <div class="debug-controls">
+              <!-- 줌 기능 제거 - 1배율 고정 -->
+              <div class="metric-item">
+                <span class="metric-label">해상도:</span>
+                <span class="metric-value" id="zoomValue">1배율 (640x480)</span>
+              </div>
+              <div class="metric-item">
+                <label style="display: flex; align-items: center; gap: 8px">
+                  <input type="checkbox" id="mirrorMode" style="margin: 0" />
+                  <span class="metric-label">좌우 반전</span>
+                </label>
+              </div>
+              <div
+                class="metric-item"
+                style="grid-column: 1 / -1; justify-content: center"
+              >
+                <button
+                  id="recenterEyes"
+                  style="
+                    padding: 6px 12px;
+                    font-size: 11px;
+                    background: #667eea;
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    cursor: pointer;
+                    font-weight: 600;
+                  "
+                >
+                  눈 중앙 맞추기
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

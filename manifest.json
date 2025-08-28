@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Gaze Scroll - 눈 시선 스크롤",
+  "version": "1.0",
+  "description": "눈 시선으로 웹페이지를 위아래로 스크롤할 수 있는 크롬 확장 프로그램",
+  "permissions": ["activeTab", "storage", "scripting", "camera"],
+  "host_permissions": ["<all_urls>"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Gaze Scroll 활성화"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_end"
+    }
+  ]
+}
