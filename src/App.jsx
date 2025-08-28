@@ -864,12 +864,18 @@ function App() {
                 playsInline
                 muted
                 className={`w-full h-full object-contain bg-black ${isCameraActive ? 'block' : 'hidden'}`}
+                style={{
+                  transform: 'scaleX(-1)' // 좌우 반전으로 미러링 효과
+                }}
               />
               
               {/* 손 인식 오버레이 캔버스 */}
               <canvas
                 ref={canvasRef}
                 className={`absolute inset-0 w-full h-full pointer-events-none ${isCameraActive ? 'block' : 'hidden'}`}
+                style={{
+                  transform: 'scaleX(-1)' // 비디오와 같은 방향으로 미러링
+                }}
               />
               
               {/* 카메라가 활성화되지 않았을 때 표시할 내용 */}
@@ -951,6 +957,123 @@ function App() {
             </div>
           </div>
         )}
+
+        {/* 제스처 도움말 */}
+        <div className="bg-blue-50 rounded-lg shadow-sm p-6 mb-6">
+          <h2 className="text-xl font-semibold text-blue-800 mb-4">✋ 손 제스처 도움말</h2>
+          <p className="text-blue-700 mb-4">
+            손 제스처로 웹페이지를 스크롤할 수 있습니다. 카메라 앞에서 다양한 손 모양을 만들어보세요!
+          </p>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* 기본 제스처 */}
+            <div>
+              <h3 className="text-lg font-semibold text-blue-800 mb-3">🖐️ 기본 제스처</h3>
+              <div className="space-y-2 text-sm">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">손바닥 펴기 (위쪽):</span>
+                  <span>⬆️ 위로 스크롤 (500px)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">손바닥 펴기 (아래쪽):</span>
+                  <span>⬇️ 아래로 스크롤 (300px)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">손 접기:</span>
+                  <span>⬆️ 위로 스크롤 (500px)</span>
+                </div>
+              </div>
+            </div>
+
+            {/* 한 손가락 제스처 */}
+            <div>
+              <h3 className="text-lg font-semibold text-blue-800 mb-3">👆 한 손가락 제스처</h3>
+              <div className="space-y-2 text-sm">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">검지만:</span>
+                  <span>⬇️ 빠른 아래 (600px)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">중지만:</span>
+                  <span>⬆️ 위로 (400px)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">약지만:</span>
+                  <span>⬇️ 아래로 (500px)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">새끼만:</span>
+                  <span>⬆️ 빠른 위 (800px)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">엄지만:</span>
+                  <span>⬆️ 맨 위로 이동</span>
+                </div>
+              </div>
+            </div>
+
+            {/* 두 손가락 제스처 */}
+            <div>
+              <h3 className="text-lg font-semibold text-blue-800 mb-3">✌️ 두 손가락 제스처</h3>
+              <div className="space-y-2 text-sm">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">검지+중지 (평화):</span>
+                  <span>⬇️ 빠른 아래 (800px)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">검지+중지 터치:</span>
+                  <span>⬇️ 아래로 (400px)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">검지+약지:</span>
+                  <span>⬆️ 빠른 위 (900px)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">검지+새끼 (락):</span>
+                  <span>⬆️ 빠른 위 (1000px)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">중지+약지:</span>
+                  <span>⬆️ 위로 (600px)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">중지+새끼:</span>
+                  <span>⬇️ 아래로 (700px)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">약지+새끼:</span>
+                  <span>⬇️ 매우 빠른 아래 (1200px)</span>
+                </div>
+              </div>
+            </div>
+
+            {/* 세 손가락 이상 제스처 */}
+            <div>
+              <h3 className="text-lg font-semibold text-blue-800 mb-3">🤟 세 손가락 이상 제스처</h3>
+              <div className="space-y-2 text-sm">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">검지+중지+약지:</span>
+                  <span>⬆️ 매우 빠른 위 (1500px)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">검지+중지+약지+새끼:</span>
+                  <span>⬇️ 맨 아래로 이동</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-6 p-4 bg-blue-100 rounded-lg">
+            <h4 className="font-semibold text-blue-800 mb-2">💡 사용 팁</h4>
+            <ul className="text-sm text-blue-700 space-y-1">
+              <li>• 카메라 앞에서 손을 명확하게 보이도록 하세요</li>
+              <li>• 손가락을 충분히 펴서 제스처를 명확하게 만드세요</li>
+              <li>• 두 손가락 터치는 화면 중앙 영역에서 해야 합니다</li>
+              <li>• 제스처가 안정적으로 인식될 때까지 1-2초 기다리세요</li>
+              <li>• 밝은 환경에서 사용하면 인식률이 높아집니다</li>
+            </ul>
+          </div>
+        </div>
 
         {/* 간단한 테스트 컨텐츠 */}
         <div className="bg-white rounded-lg shadow-sm p-6">
