@@ -1,4 +1,4 @@
-// Gaze Scroll Content Script
+// Gaze Scroll Content Script with MediaPipe Face Mesh
 class GazeScroll {
   constructor() {
     this.isActive = false;
@@ -7,6 +7,11 @@ class GazeScroll {
     this.canvas = null;
     this.video = null;
     this.animationId = null;
+    
+    // MediaPipe Face Mesh 관련
+    this.faceMesh = null;
+    this.faceDetectionResults = null;
+    this.mediaPipeInitialized = false;
 
     this.settings = {
       scrollSpeed: 50,
@@ -31,6 +36,9 @@ class GazeScroll {
     // 메시지 전송 상태 플래그
     this.messageSendPaused = false;
 
+    // 향후 확장을 위한 얼굴감지 시스템
+    this.advancedFaceDetection = false;
+
     this.init();
   }
 
@@ -40,6 +48,75 @@ class GazeScroll {
 
     // 초기 설정 적용
     this.applyMirrorMode();
+    
+    // MediaPipe 라이브러리 로드
+    this.loadMediaPipe();
+    
+    console.log('✅ Gaze Scroll 초기화 완료 - MediaPipe Face Mesh 사용');
+  }
+
+  // MediaPipe 라이브러리를 동적으로 로드
+  async loadMediaPipe() {
+    try {
+      console.log('MediaPipe 라이브러리 로딩 중...');
+      
+      // MediaPipe Face Mesh 라이브러리 로드
+      await this.loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js');
+      await this.loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js');
+      await this.loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js');
+      await this.loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js');
+      
+      console.log('✅ MediaPipe 라이브러리 로드 완료');
+      this.initMediaPipeFaceMesh();
+      
+    } catch (error) {
+      console.error('❌ MediaPipe 라이브러리 로드 실패:', error);
+      console.log('기본 얼굴 감지 알고리즘으로 대체');
+    }
+  }
+
+  // 스크립트 동적 로드 헬퍼 함수
+  loadScript(src) {
+    return new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = src;
+      script.onload = resolve;
+      script.onerror = reject;
+      document.head.appendChild(script);
+    });
+  }
+
+  // MediaPipe Face Mesh 초기화
+  async initMediaPipeFaceMesh() {
+    try {
+      if (typeof FaceMesh === 'undefined') {
+        throw new Error('FaceMesh가 로드되지 않았습니다');
+      }
+
+      this.faceMesh = new FaceMesh({
+        locateFile: (file) => {
+          return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
+        }
+      });
+
+      this.faceMesh.setOptions({
+        maxNumFaces: 1,
+        refineLandmarks: true,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+      });
+
+      this.faceMesh.onResults((results) => {
+        this.faceDetectionResults = results;
+      });
+
+      this.mediaPipeInitialized = true;
+      console.log('✅ MediaPipe Face Mesh 초기화 완료');
+      
+    } catch (error) {
+      console.error('❌ MediaPipe Face Mesh 초기화 실패:', error);
+      this.mediaPipeInitialized = false;
+    }
   }
 
   // 안전한 메시지 전송 함수
@@ -482,31 +559,40 @@ class GazeScroll {
         if (this.video.readyState === this.video.HAVE_ENOUGH_DATA) {
           this.ctx.drawImage(this.video, 0, 0, this.canvas.width, this.canvas.height);
 
+          // MediaPipe Face Mesh로 얼굴 분석 (비동기 호출)
+          if (this.mediaPipeInitialized && this.faceMesh) {
+            this.faceMesh.send({ image: this.video }).catch(error => {
+              console.warn('MediaPipe 처리 중 오류:', error);
+            });
+          }
+
           // 이미지 데이터 가져오기 (최적화: 필요한 영역만 처리)
           const imageData = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
           const data = imageData.data;
 
-          // 간단한 밝기 분석으로 시선 방향 추정
+          // 간단한 밝기 분석으로 시선 방향 추정 (Fallback용)
           const regions = this.analyzeImageRegions(data, this.canvas.width, this.canvas.height);
 
-          // 개선된 눈 영역 감지
+          // MediaPipe 또는 기본 알고리즘을 사용한 눈 영역 감지
           let eyeRegions = null;
           if (this.settings.debugMode || this.eyeTrackingState.isCalibrated) {
             eyeRegions = this.detectEyesWithTracking(data, this.canvas.width, this.canvas.height);
           }
-
-          // 시선 방향 결정 (밝기 변화 기반)
-          const currentBrightness = (regions.top + regions.bottom + regions.left + regions.right) / 4;
-          const brightnessDiff = currentBrightness - previousBrightness;
 
           // 화면 높이 기준으로 영역 계산
           const screenHeight = window.innerHeight;
           const topThreshold = screenHeight * (this.settings.topZone / 100);
           const bottomThreshold = screenHeight * (1 - this.settings.bottomZone / 100);
 
-          // 시선 방향 결정 (단순화된 로직)
-          // 실제로는 머신러닝 모델이 필요하지만, 여기서는 밝기 변화로 추정
-          const gazeY = this.estimateGazeY(regions, screenHeight);
+          // 시선 방향 결정 (MediaPipe 또는 밝기 기반)
+          let gazeY;
+          if (eyeRegions && eyeRegions.isMediaPipe) {
+            // MediaPipe 결과를 사용한 정밀한 시선 추정
+            gazeY = this.estimateGazeYWithMediaPipe(eyeRegions, screenHeight);
+          } else {
+            // 기본 밝기 분석 사용
+            gazeY = this.estimateGazeY(regions, screenHeight);
+          }
 
           // 스크롤 방향 결정
           if (gazeY < topThreshold) {
@@ -526,7 +612,9 @@ class GazeScroll {
           }
 
           // 디버그 정보 전송 (항상 전송 - 팝업에서 카메라 표시용)
-            this.sendDebugInfo(regions, currentBrightness, previousBrightness, gazeY, screenHeight, eyeRegions);
+          const currentBrightness = (regions.top + regions.bottom + regions.left + regions.right) / 4;
+          const brightnessDiff = currentBrightness - previousBrightness;
+          this.sendDebugInfo(regions, currentBrightness, previousBrightness, gazeY, screenHeight, eyeRegions);
 
           previousBrightness = currentBrightness;
         }
@@ -594,7 +682,7 @@ class GazeScroll {
 
   // 눈 감지 및 추적 (개선된 알고리즘)
   detectAndTrackEyes(data, width, height) {
-    // 1. 얼굴 영역 찾기
+    // 1. 얼굴 영역 찾기 (개선된 피부톤 기반 감지)
     const faceRegion = this.findFaceRegion(data, width, height);
 
     if (!faceRegion) return null;
@@ -974,11 +1062,167 @@ class GazeScroll {
     return pixelCount > 0 ? totalBrightness / pixelCount : 255;
   }
 
-  // 개선된 눈 감지 (더 정확한 그리드 기반 방식)
+  // MediaPipe Face Mesh를 사용한 정밀한 눈 감지
   detectEyesWithTracking(data, width, height) {
-    // tracking.js 대신 개선된 기존 알고리즘 사용
-    const faceRegion = this.findFaceRegion(data, width, height);
-    return this.findEyesInFaceRegion(data, width, height, faceRegion);
+    if (this.mediaPipeInitialized && this.faceDetectionResults) {
+      return this.detectEyesWithMediaPipe();
+    } else {
+      // MediaPipe가 초기화되지 않았거나 결과가 없으면 기본 알고리즘 사용
+      const faceRegion = this.findFaceRegion(data, width, height);
+      return this.findEyesInFaceRegion(data, width, height, faceRegion);
+    }
+  }
+
+  // MediaPipe Face Mesh를 사용한 눈 감지
+  detectEyesWithMediaPipe() {
+    if (!this.faceDetectionResults || !this.faceDetectionResults.multiFaceLandmarks || 
+        this.faceDetectionResults.multiFaceLandmarks.length === 0) {
+      return null;
+    }
+
+    const landmarks = this.faceDetectionResults.multiFaceLandmarks[0];
+    
+    // MediaPipe Face Mesh 눈 랜드마크 인덱스
+    // 왼쪽 눈: 362, 398, 384, 385, 386, 387, 388, 466, 263, 249, 390, 373, 374, 380, 381, 382
+    // 오른쪽 눈: 33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246
+    
+    const leftEyeLandmarks = [362, 398, 384, 385, 386, 387, 388, 466, 263, 249, 390, 373, 374, 380, 381, 382];
+    const rightEyeLandmarks = [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246];
+    
+    // 왼쪽 눈 중심점 계산
+    const leftEyeCenter = this.calculateEyeCenter(landmarks, leftEyeLandmarks);
+    const rightEyeCenter = this.calculateEyeCenter(landmarks, rightEyeLandmarks);
+    
+    // 눈 영역 바운딩 박스 계산
+    const leftEyeBounds = this.calculateEyeBounds(landmarks, leftEyeLandmarks);
+    const rightEyeBounds = this.calculateEyeBounds(landmarks, rightEyeLandmarks);
+    
+    // 눈꺼풀 상태 계산 (눈이 감겨있는지 확인)
+    const leftEyeOpenness = this.calculateEyeOpenness(landmarks, leftEyeLandmarks);
+    const rightEyeOpenness = this.calculateEyeOpenness(landmarks, rightEyeLandmarks);
+    
+    // 시선 방향 계산 (동공 중심과 눈꺼풀 관계 분석)
+    const leftGazeDirection = this.calculateGazeDirection(landmarks, leftEyeLandmarks, leftEyeCenter);
+    const rightGazeDirection = this.calculateGazeDirection(landmarks, rightEyeLandmarks, rightEyeCenter);
+    
+    return {
+      leftEye: {
+        x: leftEyeBounds.x,
+        y: leftEyeBounds.y,
+        width: leftEyeBounds.width,
+        height: leftEyeBounds.height,
+        center: leftEyeCenter,
+        confidence: leftEyeOpenness > 0.1 ? 0.9 : 0.1, // 눈이 열려있으면 높은 신뢰도
+        openness: leftEyeOpenness,
+        gazeDirection: leftGazeDirection
+      },
+      rightEye: {
+        x: rightEyeBounds.x,
+        y: rightEyeBounds.y,
+        width: rightEyeBounds.width,
+        height: rightEyeBounds.height,
+        center: rightEyeCenter,
+        confidence: rightEyeOpenness > 0.1 ? 0.9 : 0.1,
+        openness: rightEyeOpenness,
+        gazeDirection: rightGazeDirection
+      },
+      faceCenter: this.calculateFaceCenter(landmarks),
+      isMediaPipe: true
+    };
+  }
+
+  // 눈 중심점 계산
+  calculateEyeCenter(landmarks, eyeLandmarkIndices) {
+    let sumX = 0, sumY = 0;
+    for (const index of eyeLandmarkIndices) {
+      sumX += landmarks[index].x;
+      sumY += landmarks[index].y;
+    }
+    return {
+      x: (sumX / eyeLandmarkIndices.length) * this.canvas.width,
+      y: (sumY / eyeLandmarkIndices.length) * this.canvas.height
+    };
+  }
+
+  // 눈 영역 바운딩 박스 계산
+  calculateEyeBounds(landmarks, eyeLandmarkIndices) {
+    let minX = 1, maxX = 0, minY = 1, maxY = 0;
+    
+    for (const index of eyeLandmarkIndices) {
+      const point = landmarks[index];
+      minX = Math.min(minX, point.x);
+      maxX = Math.max(maxX, point.x);
+      minY = Math.min(minY, point.y);
+      maxY = Math.max(maxY, point.y);
+    }
+    
+    return {
+      x: minX * this.canvas.width,
+      y: minY * this.canvas.height,
+      width: (maxX - minX) * this.canvas.width,
+      height: (maxY - minY) * this.canvas.height
+    };
+  }
+
+  // 눈꺼풀 열림 정도 계산
+  calculateEyeOpenness(landmarks, eyeLandmarkIndices) {
+    // 눈의 수직 거리를 측정해서 눈꺼풀 열림 정도 계산
+    // 왼쪽 눈: 위쪽 385, 아래쪽 380
+    // 오른쪽 눈: 위쪽 159, 아래쪽 145
+    
+    let topIndex, bottomIndex;
+    if (eyeLandmarkIndices.includes(385)) { // 왼쪽 눈
+      topIndex = 385;
+      bottomIndex = 380;
+    } else { // 오른쪽 눈
+      topIndex = 159;
+      bottomIndex = 145;
+    }
+    
+    const topPoint = landmarks[topIndex];
+    const bottomPoint = landmarks[bottomIndex];
+    
+    const eyeHeight = Math.abs(topPoint.y - bottomPoint.y);
+    return eyeHeight; // 0에 가까우면 눈이 감긴 상태, 클수록 눈이 열린 상태
+  }
+
+  // 시선 방향 계산
+  calculateGazeDirection(landmarks, eyeLandmarkIndices, eyeCenter) {
+    // 동공의 위치를 추정하여 시선 방향 계산
+    // 실제로는 동공을 직접 감지할 수 없으므로, 눈의 형태 변화로 추정
+    
+    // 눈의 좌우 끝점을 찾아서 시선 방향 추정
+    let leftCorner, rightCorner;
+    if (eyeLandmarkIndices.includes(385)) { // 왼쪽 눈
+      leftCorner = landmarks[362]; // 왼쪽 눈의 왼쪽 모서리
+      rightCorner = landmarks[263]; // 왼쪽 눈의 오른쪽 모서리
+    } else { // 오른쪽 눈
+      leftCorner = landmarks[33]; // 오른쪽 눈의 왼쪽 모서리
+      rightCorner = landmarks[133]; // 오른쪽 눈의 오른쪽 모서리
+    }
+    
+    // 눈의 중심점과 모서리들의 관계로 시선 방향 추정
+    const eyeWidth = Math.abs(rightCorner.x - leftCorner.x);
+    const centerOffsetX = eyeCenter.x / this.canvas.width - (leftCorner.x + rightCorner.x) / 2;
+    const centerOffsetY = eyeCenter.y / this.canvas.height - (leftCorner.y + rightCorner.y) / 2;
+    
+    return {
+      x: centerOffsetX / eyeWidth, // -0.5 ~ 0.5 범위
+      y: centerOffsetY / eyeWidth  // -0.5 ~ 0.5 범위
+    };
+  }
+
+  // 얼굴 중심점 계산
+  calculateFaceCenter(landmarks) {
+    // 코끝 (1), 이마 중앙 (9), 턱 중앙 (175) 등을 사용해 얼굴 중심 계산
+    const noseTip = landmarks[1];
+    const foreheadCenter = landmarks[9];
+    const chinCenter = landmarks[175];
+    
+    return {
+      x: ((noseTip.x + foreheadCenter.x + chinCenter.x) / 3) * this.canvas.width,
+      y: ((noseTip.y + foreheadCenter.y + chinCenter.y) / 3) * this.canvas.height
+    };
   }
 
   estimateGazeY(regions, screenHeight) {
@@ -1022,6 +1266,68 @@ class GazeScroll {
     return gazeY;
   }
 
+  // MediaPipe 결과를 사용한 정밀한 시선 추정
+  estimateGazeYWithMediaPipe(eyeRegions, screenHeight) {
+    if (!eyeRegions || !eyeRegions.leftEye || !eyeRegions.rightEye) {
+      // MediaPipe 결과가 없으면 화면 중앙으로 기본값 설정
+      return screenHeight * 0.5;
+    }
+
+    const leftEye = eyeRegions.leftEye;
+    const rightEye = eyeRegions.rightEye;
+    
+    // 두 눈의 평균 시선 방향 계산
+    let averageGazeY = 0;
+    let validEyeCount = 0;
+    
+    if (leftEye.confidence > 0.3 && leftEye.gazeDirection) {
+      // 왼쪽 눈의 Y축 시선 방향을 화면 좌표로 변환
+      // gazeDirection.y: -0.5(위) ~ 0.5(아래)를 0(위) ~ 1(아래)로 변환
+      const leftGazeY = 0.5 + leftEye.gazeDirection.y;
+      averageGazeY += leftGazeY;
+      validEyeCount++;
+    }
+    
+    if (rightEye.confidence > 0.3 && rightEye.gazeDirection) {
+      // 오른쪽 눈의 Y축 시선 방향을 화면 좌표로 변환
+      const rightGazeY = 0.5 + rightEye.gazeDirection.y;
+      averageGazeY += rightGazeY;
+      validEyeCount++;
+    }
+    
+    if (validEyeCount === 0) {
+      // 유효한 눈이 없으면 화면 중앙
+      return screenHeight * 0.5;
+    }
+    
+    // 평균 시선 방향 계산
+    averageGazeY /= validEyeCount;
+    
+    // 눈꺼풀 열림 정도를 고려한 보정
+    const leftOpenness = leftEye.openness || 0;
+    const rightOpenness = rightEye.openness || 0;
+    const averageOpenness = (leftOpenness + rightOpenness) / 2;
+    
+    // 눈이 감겨있으면 시선 추적 신뢰도 낮춤
+    if (averageOpenness < 0.05) {
+      // 눈이 거의 감겨있으면 이전 시선 방향 유지하거나 중앙으로
+      return this.lastGazeY || screenHeight * 0.5;
+    }
+    
+    // 시선 방향을 부드럽게 스무딩 (급격한 변화 방지)
+    const smoothingFactor = 0.7; // 0.0 (급격한 변화) ~ 1.0 (변화 없음)
+    if (this.lastGazeY !== undefined) {
+      const currentGazeY = averageGazeY * screenHeight;
+      const smoothedGazeY = this.lastGazeY * smoothingFactor + currentGazeY * (1 - smoothingFactor);
+      this.lastGazeY = smoothedGazeY;
+      return smoothedGazeY;
+    } else {
+      const gazeY = averageGazeY * screenHeight;
+      this.lastGazeY = gazeY;
+      return gazeY;
+    }
+  }
+
   sendDebugInfo(regions, currentBrightness, previousBrightness, gazeY, screenHeight, eyeRegions) {
     // 메시지 전송이 일시 중단된 경우 전송하지 않음
     if (this.messageSendPaused) {
@@ -1056,7 +1362,7 @@ class GazeScroll {
     // 눈 추적 품질 평가
     const eyeTrackingQuality = this.evaluateEyeTrackingQuality(eyeRegions);
 
-    // 현재 프레임에서 찾은 얼굴 영역 (디버그용)
+    // 현재 프레임에서 찾은 얼굴 영역 (개선된 감지)
     const currentFaceRegion = this.findFaceRegion(this.ctx.getImageData(0, 0, 640, 480).data, 640, 480);
 
     // 디버그 데이터 구성
@@ -1109,9 +1415,17 @@ class GazeScroll {
       systemStatus: {
         isActive: this.isActive,
         isCalibrating: this.isCalibrating,
-        debugMode: this.settings.debugMode
+        debugMode: this.settings.debugMode,
+        faceDetectionMethod: this.mediaPipeInitialized ? 'MediaPipe Face Mesh' : 'Enhanced',
+        mediaPipeStatus: {
+          initialized: this.mediaPipeInitialized,
+          hasResults: !!(this.faceDetectionResults && this.faceDetectionResults.multiFaceLandmarks && this.faceDetectionResults.multiFaceLandmarks.length > 0),
+          landmarkCount: this.faceDetectionResults && this.faceDetectionResults.multiFaceLandmarks && this.faceDetectionResults.multiFaceLandmarks.length > 0 ? this.faceDetectionResults.multiFaceLandmarks[0].length : 0
+        }
         // mirrorMode 제거됨 - 항상 반전 모드로 고정
-      }
+      },
+      // MediaPipe 랜드마크 데이터 추가
+      mediaPipeLandmarks: this.faceDetectionResults && this.faceDetectionResults.multiFaceLandmarks && this.faceDetectionResults.multiFaceLandmarks.length > 0 ? this.faceDetectionResults.multiFaceLandmarks[0] : null
     };
 
     // 항상 캔버스 이미지 캡처 (카메라 표시용)

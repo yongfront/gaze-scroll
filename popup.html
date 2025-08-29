@@ -254,6 +254,14 @@
                   >
                 </div>
                 <div class="metric-item">
+                  <span class="metric-label">감지 방식:</span>
+                  <span class="metric-value" id="detectionMethod">기본</span>
+                </div>
+                <div class="metric-item">
+                  <span class="metric-label">MediaPipe:</span>
+                  <span class="metric-value" id="mediaPipeStatus">로딩중</span>
+                </div>
+                <div class="metric-item">
                   <span class="metric-label">눈 추적 품질:</span>
                   <span class="metric-value" id="eyeTrackingQuality">0.0</span>
                 </div>
@@ -328,7 +336,7 @@
                 <!-- 좌우 반전 체크박스 제거됨 - 항상 반전 모드로 고정 -->
                 <div
                   class="metric-item"
-                  style="grid-column: 1 / -1; justify-content: center"
+                  style="grid-column: 1 / -1; justify-content: center; gap: 8px"
                 >
                   <button
                     id="recenterEyes"
@@ -344,6 +352,21 @@
                     "
                   >
                     눈 중앙 맞추기
+                  </button>
+                  <button
+                    id="pipModeBtn"
+                    style="
+                      padding: 6px 12px;
+                      font-size: 11px;
+                      background: #fd79a8;
+                      color: white;
+                      border: none;
+                      border-radius: 6px;
+                      cursor: pointer;
+                      font-weight: 600;
+                    "
+                  >
+                    📺 PIP 모드
                   </button>
                 </div>
               </div>

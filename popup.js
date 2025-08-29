@@ -32,12 +32,15 @@ document.addEventListener('DOMContentLoaded', function() {
   // 줌 기능 제거됨 - 1배율 고정
   // mirrorMode 제거됨 - 항상 반전 모드로 고정
   const recenterEyes = document.getElementById('recenterEyes');
+  const pipModeBtn = document.getElementById('pipModeBtn');
   const eyeTrackingStatus = document.getElementById('eyeTrackingStatus');
   const calibrationProgress = document.getElementById('calibrationProgress');
   const debugPanelContainer = document.getElementById('debugPanelContainer');
 
   // 새로운 디버그 요소들
   const faceDetectionStatus = document.getElementById('faceDetectionStatus');
+  const detectionMethod = document.getElementById('detectionMethod');
+  const mediaPipeStatus = document.getElementById('mediaPipeStatus');
   const eyeTrackingQuality = document.getElementById('eyeTrackingQuality');
   const topBrightness = document.getElementById('topBrightness');
   const bottomBrightness = document.getElementById('bottomBrightness');
@@ -47,6 +50,10 @@ document.addEventListener('DOMContentLoaded', function() {
   const skinPixels = document.getElementById('skinPixels');
 
   let isActive = false;
+  let pipWindow = null;
+  let pipCanvas = null;
+  let pipCtx = null;
+  let isPipMode = false;
 
   // 저장된 설정 불러오기
   loadSettings();
@@ -206,6 +213,11 @@ document.addEventListener('DOMContentLoaded', function() {
   // 눈 중앙 맞추기 버튼 이벤트
   recenterEyes.addEventListener('click', function() {
     recenterEyeTracking();
+  });
+
+  // PIP 모드 버튼 이벤트
+  pipModeBtn.addEventListener('click', function() {
+    togglePipMode();
   });
 
   // 상단 알림 클릭으로 닫기 (CSP 인라인 제거 대응)
@@ -712,6 +724,31 @@ document.addEventListener('DOMContentLoaded', function() {
       faceDetectionStatus.style.color = data.faceDetection.confidence > 0.5 ? '#51cf66' : '#ffd43b';
     }
 
+    // MediaPipe 상태 업데이트
+    if (data.systemStatus && data.systemStatus.mediaPipeStatus) {
+      const mpStatus = data.systemStatus.mediaPipeStatus;
+      
+      if (detectionMethod) {
+        detectionMethod.textContent = data.systemStatus.faceDetectionMethod || '기본';
+        detectionMethod.style.color = data.systemStatus.faceDetectionMethod === 'MediaPipe Face Mesh' ? '#51cf66' : '#ffd43b';
+      }
+      
+      if (mediaPipeStatus) {
+        if (mpStatus.initialized) {
+          if (mpStatus.hasResults) {
+            mediaPipeStatus.textContent = `활성 (${mpStatus.landmarkCount}개)`;
+            mediaPipeStatus.style.color = '#51cf66';
+          } else {
+            mediaPipeStatus.textContent = '초기화됨';
+            mediaPipeStatus.style.color = '#ffd43b';
+          }
+        } else {
+          mediaPipeStatus.textContent = '로딩중';
+          mediaPipeStatus.style.color = '#ff6b6b';
+        }
+      }
+    }
+
     if (data.eyeTracking && data.eyeTracking.quality && eyeTrackingQuality) {
       const quality = data.eyeTracking.quality;
       eyeTrackingQuality.textContent = quality.score.toFixed(2);
@@ -781,6 +818,9 @@ document.addEventListener('DOMContentLoaded', function() {
       debugVideo.lastDebugData = data;
     }
 
+    // 전역에서 접근 가능하도록 현재 디버그 데이터 저장
+    window.currentDebugData = data;
+
     if (data.frameImage) {
       displayDebugFrame(data.frameImage);
     }
@@ -789,6 +829,11 @@ document.addEventListener('DOMContentLoaded', function() {
     if (data.gazeX !== undefined && data.gazeY !== undefined) {
       const eyeRegions = data.eyeTracking && data.eyeTracking.regions ? data.eyeTracking.regions : null;
       drawGazeIndicator(data.gazeX, data.gazeY, eyeRegions, data.currentFaceRegion);
+    }
+
+    // PIP 창 업데이트
+    if (isPipMode) {
+      updatePipWindow(data);
     }
   }
 
@@ -885,6 +930,402 @@ document.addEventListener('DOMContentLoaded', function() {
   // 캔버스 컨텍스트 캐싱으로 성능 개선
   let debugCtx = null;
 
+  // PIP 모드 토글 함수
+  function togglePipMode() {
+    if (!isPipMode) {
+      openPipWindow();
+    } else {
+      closePipWindow();
+    }
+  }
+
+  // PIP 창 열기
+  function openPipWindow() {
+    try {
+      // PIP 창 크기 및 위치 계산
+      const pipWidth = 400;
+      const pipHeight = 350;
+      const screenWidth = window.screen.availWidth;
+      const screenHeight = window.screen.availHeight;
+      const pipX = screenWidth - pipWidth - 20; // 오른쪽 상단
+      const pipY = 20;
+
+      // 새 창 열기
+      pipWindow = window.open('', 'GazeScrollPIP', 
+        `width=${pipWidth},height=${pipHeight},left=${pipX},top=${pipY},resizable=yes,scrollbars=no,toolbar=no,menubar=no,location=no,status=no`);
+
+      if (!pipWindow) {
+        alert('팝업 차단기가 활성화되어 있습니다. PIP 모드를 사용하려면 팝업을 허용해주세요.');
+        return;
+      }
+
+      // PIP 창 HTML 구성
+      pipWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>👁️ Gaze Scroll - PIP 모드</title>
+          <style>
+            body {
+              margin: 0;
+              padding: 10px;
+              background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+              color: white;
+              overflow: hidden;
+            }
+            .pip-header {
+              text-align: center;
+              margin-bottom: 10px;
+              font-size: 14px;
+              font-weight: bold;
+            }
+            .pip-canvas-container {
+              position: relative;
+              width: 100%;
+              height: 240px;
+              background: rgba(0, 0, 0, 0.3);
+              border-radius: 8px;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              overflow: hidden;
+            }
+            #pipCanvas {
+              max-width: 100%;
+              max-height: 100%;
+              border-radius: 8px;
+            }
+            .pip-status {
+              margin-top: 10px;
+              font-size: 11px;
+              text-align: center;
+              display: grid;
+              grid-template-columns: 1fr 1fr;
+              gap: 10px;
+            }
+            .status-item {
+              background: rgba(255, 255, 255, 0.1);
+              padding: 5px;
+              border-radius: 4px;
+            }
+            .close-btn {
+              position: absolute;
+              top: 5px;
+              right: 5px;
+              background: rgba(255, 255, 255, 0.2);
+              border: none;
+              color: white;
+              padding: 5px 8px;
+              border-radius: 4px;
+              cursor: pointer;
+              font-size: 12px;
+            }
+            .close-btn:hover {
+              background: rgba(255, 255, 255, 0.3);
+            }
+          </style>
+        </head>
+        <body>
+          <button class="close-btn" onclick="window.close()">✕</button>
+          <div class="pip-header">👁️ 시선 추적 모니터</div>
+          <div class="pip-canvas-container">
+            <canvas id="pipCanvas" width="320" height="240"></canvas>
+          </div>
+          <div class="pip-status">
+            <div class="status-item">
+              <div>상태: <span id="pipTrackingStatus">대기중</span></div>
+            </div>
+            <div class="status-item">
+              <div>방식: <span id="pipDetectionMethod">기본</span></div>
+            </div>
+            <div class="status-item">
+              <div>시선: <span id="pipGazePosition">중앙</span></div>
+            </div>
+            <div class="status-item">
+              <div>스크롤: <span id="pipScrollDirection">정지</span></div>
+            </div>
+          </div>
+        </body>
+        </html>
+      `);
+
+      pipWindow.document.close();
+
+      // PIP 캔버스 설정
+      pipCanvas = pipWindow.document.getElementById('pipCanvas');
+      pipCtx = pipCanvas.getContext('2d');
+
+      // PIP 창 닫힘 이벤트 처리
+      pipWindow.addEventListener('beforeunload', function() {
+        closePipWindow();
+      });
+
+      isPipMode = true;
+      pipModeBtn.textContent = '📺 PIP 종료';
+      pipModeBtn.style.background = '#e17055';
+
+      console.log('✅ PIP 모드 활성화됨');
+      showTopNotification('📺 PIP 모드가 활성화되었습니다! 독립 창에서 시선 추적을 모니터링하세요.', 3000);
+
+    } catch (error) {
+      console.error('PIP 창 생성 실패:', error);
+      showTopNotification('❌ PIP 모드 활성화에 실패했습니다.', 2000);
+    }
+  }
+
+  // PIP 창 닫기
+  function closePipWindow() {
+    if (pipWindow && !pipWindow.closed) {
+      pipWindow.close();
+    }
+    
+    pipWindow = null;
+    pipCanvas = null;
+    pipCtx = null;
+    isPipMode = false;
+    
+    pipModeBtn.textContent = '📺 PIP 모드';
+    pipModeBtn.style.background = '#fd79a8';
+    
+    console.log('✅ PIP 모드 비활성화됨');
+  }
+
+  // PIP 창 업데이트
+  function updatePipWindow(data) {
+    if (!isPipMode || !pipWindow || pipWindow.closed || !pipCtx) {
+      return;
+    }
+
+    try {
+      // 캔버스 클리어
+      pipCtx.clearRect(0, 0, pipCanvas.width, pipCanvas.height);
+
+      // 현재 프레임 이미지가 있으면 그리기
+      if (data.frameImage) {
+        const img = new Image();
+        img.onload = function() {
+          pipCtx.drawImage(img, 0, 0, pipCanvas.width, pipCanvas.height);
+          
+          // MediaPipe 랜드마크 그리기
+          if (data.mediaPipeLandmarks) {
+            drawPipLandmarks(pipCtx, data.mediaPipeLandmarks);
+          }
+          
+          // 시선 방향 표시
+          if (data.gazeX !== undefined && data.gazeY !== undefined) {
+            drawPipGazeIndicator(pipCtx, data.gazeX, data.gazeY);
+          }
+        };
+        img.src = data.frameImage;
+      }
+
+      // 상태 정보 업데이트
+      const pipTrackingStatus = pipWindow.document.getElementById('pipTrackingStatus');
+      const pipDetectionMethod = pipWindow.document.getElementById('pipDetectionMethod');
+      const pipGazePosition = pipWindow.document.getElementById('pipGazePosition');
+      const pipScrollDirection = pipWindow.document.getElementById('pipScrollDirection');
+
+      if (pipTrackingStatus) {
+        pipTrackingStatus.textContent = data.systemStatus && data.systemStatus.isActive ? '활성' : '비활성';
+        pipTrackingStatus.style.color = data.systemStatus && data.systemStatus.isActive ? '#00d4aa' : '#fab1a0';
+      }
+
+      if (pipDetectionMethod) {
+        const method = data.systemStatus && data.systemStatus.faceDetectionMethod === 'MediaPipe Face Mesh' ? 'AI' : '기본';
+        pipDetectionMethod.textContent = method;
+        pipDetectionMethod.style.color = method === 'AI' ? '#00d4aa' : '#fdcb6e';
+      }
+
+      if (pipGazePosition) {
+        pipGazePosition.textContent = data.gazePosition || '중앙';
+      }
+
+      if (pipScrollDirection) {
+        const direction = data.scrollDirection === -1 ? '위로' : data.scrollDirection === 1 ? '아래로' : '정지';
+        pipScrollDirection.textContent = direction;
+        pipScrollDirection.style.color = direction === '정지' ? '#b2bec3' : '#00d4aa';
+      }
+
+    } catch (error) {
+      console.warn('PIP 창 업데이트 중 오류:', error);
+    }
+  }
+
+  // PIP 창에서 랜드마크 그리기
+  function drawPipLandmarks(ctx, landmarks) {
+    if (!landmarks || landmarks.length === 0) return;
+
+    // 주요 특징점만 표시 (성능 최적화)
+    const eyeLandmarks = [
+      // 왼쪽 눈
+      33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246,
+      // 오른쪽 눈  
+      362, 398, 384, 385, 386, 387, 388, 466, 263, 249, 390, 373, 374, 380, 381, 382
+    ];
+
+    // 눈 영역 표시
+    ctx.strokeStyle = '#00d4aa';
+    ctx.lineWidth = 2;
+    ctx.fillStyle = 'rgba(0, 212, 170, 0.3)';
+
+    eyeLandmarks.forEach(index => {
+      if (landmarks[index]) {
+        const x = landmarks[index].x * pipCanvas.width;
+        const y = landmarks[index].y * pipCanvas.height;
+        
+        ctx.beginPath();
+        ctx.arc(x, y, 2, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+    });
+  }
+
+  // PIP 창에서 시선 방향 표시
+  function drawPipGazeIndicator(ctx, gazeX, gazeY) {
+    const x = gazeX * pipCanvas.width;
+    const y = gazeY * pipCanvas.height;
+
+    // 시선 십자가
+    ctx.strokeStyle = '#ff6b6b';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(x - 15, y);
+    ctx.lineTo(x + 15, y);
+    ctx.moveTo(x, y - 15);
+    ctx.lineTo(x, y + 15);
+    ctx.stroke();
+
+    // 시선 원
+    ctx.strokeStyle = '#ff6b6b';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y, 10, 0, 2 * Math.PI);
+    ctx.stroke();
+  }
+
+  // MediaPipe 얼굴 랜드마크 그리기 함수
+  function drawMediaPipeLandmarks(ctx) {
+    if (!window.currentDebugData || !window.currentDebugData.mediaPipeLandmarks) {
+      return;
+    }
+
+    const landmarks = window.currentDebugData.mediaPipeLandmarks;
+    const scaleX = debugCanvas.width / 640;
+    const scaleY = debugCanvas.height / 480;
+
+    // 전체 랜드마크 표시 (작은 점들)
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+    for (let i = 0; i < landmarks.length; i++) {
+      const x = landmarks[i].x * debugCanvas.width;
+      const y = landmarks[i].y * debugCanvas.height;
+      
+      ctx.beginPath();
+      ctx.arc(x, y, 1, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+
+    // 주요 특징점들을 더 크게 표시
+    const importantLandmarks = {
+      // 얼굴 윤곽 (일부만)
+      faceOval: [10, 151, 234, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234],
+      
+      // 눈썹
+      leftEyebrow: [70, 63, 105, 66, 107, 55, 65, 52, 53, 46],
+      rightEyebrow: [296, 334, 293, 300, 276, 283, 282, 295, 285, 336],
+      
+      // 눈
+      leftEye: [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246],
+      rightEye: [362, 398, 384, 385, 386, 387, 388, 466, 263, 249, 390, 373, 374, 380, 381, 382],
+      
+      // 코
+      nose: [1, 2, 5, 4, 6, 19, 20, 94, 125, 141, 235, 236, 3, 51, 48, 115, 131, 134, 102, 49, 220, 305, 284, 278],
+      
+      // 입
+      mouth: [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95]
+    };
+
+    // 각 특징점 그룹별로 색상을 다르게 표시
+    const colors = {
+      faceOval: '#ffff00',     // 노란색 - 얼굴 윤곽
+      leftEyebrow: '#00ff00',  // 녹색 - 왼쪽 눈썹
+      rightEyebrow: '#00ff00', // 녹색 - 오른쪽 눈썹
+      leftEye: '#ff0000',      // 빨간색 - 왼쪽 눈
+      rightEye: '#0080ff',     // 파란색 - 오른쪽 눈
+      nose: '#ff8000',         // 주황색 - 코
+      mouth: '#ff00ff'         // 마젠타 - 입
+    };
+
+    Object.keys(importantLandmarks).forEach(feature => {
+      const indices = importantLandmarks[feature];
+      const color = colors[feature];
+      
+      ctx.fillStyle = color;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      
+      // 특징점들을 선으로 연결
+      if (indices.length > 1) {
+        ctx.beginPath();
+        const firstPoint = landmarks[indices[0]];
+        ctx.moveTo(firstPoint.x * debugCanvas.width, firstPoint.y * debugCanvas.height);
+        
+        for (let i = 1; i < indices.length; i++) {
+          const point = landmarks[indices[i]];
+          ctx.lineTo(point.x * debugCanvas.width, point.y * debugCanvas.height);
+        }
+        
+        // 눈과 입은 폐곡선으로 연결
+        if (feature.includes('Eye') || feature === 'mouth') {
+          ctx.closePath();
+        }
+        ctx.stroke();
+      }
+      
+      // 각 특징점을 큰 점으로 표시
+      indices.forEach(index => {
+        if (landmarks[index]) {
+          const x = landmarks[index].x * debugCanvas.width;
+          const y = landmarks[index].y * debugCanvas.height;
+          
+          ctx.beginPath();
+          ctx.arc(x, y, 3, 0, 2 * Math.PI);
+          ctx.fill();
+          
+          // 중요한 점들은 번호도 표시
+          if (feature === 'leftEye' || feature === 'rightEye') {
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '8px Arial';
+            ctx.fillText(index.toString(), x + 5, y - 5);
+            ctx.fillStyle = color;
+          }
+        }
+      });
+    });
+
+    // 정보 텍스트 표시
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.fillRect(5, 5, 280, 100);
+    
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '12px Arial';
+    ctx.fillText('🧠 MediaPipe Face Mesh (468개 랜드마크)', 10, 20);
+    ctx.fillStyle = '#ffff00';
+    ctx.fillText('노란색: 얼굴 윤곽', 10, 35);
+    ctx.fillStyle = '#ff0000';
+    ctx.fillText('빨간색: 왼쪽 눈', 10, 50);
+    ctx.fillStyle = '#0080ff';
+    ctx.fillText('파란색: 오른쪽 눈', 10, 65);
+    ctx.fillStyle = '#00ff00';
+    ctx.fillText('녹색: 눈썹', 10, 80);
+    ctx.fillStyle = '#ff8000';
+    ctx.fillText('주황색: 코', 150, 35);
+    ctx.fillStyle = '#ff00ff';
+    ctx.fillText('마젠타: 입', 150, 50);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(`랜드마크 수: ${landmarks.length}개`, 150, 65);
+  }
+
   function drawGazeIndicator(gazeX, gazeY, eyeRegions, faceRegion = null) {
     // 컨텍스트 캐싱
     if (!debugCtx) {
@@ -894,6 +1335,14 @@ document.addEventListener('DOMContentLoaded', function() {
     // 캔버스 클리어 (반투명하게 해서 영상이 보이도록)
     debugCtx.fillStyle = 'rgba(0, 0, 0, 0.3)';
     debugCtx.fillRect(0, 0, debugCanvas.width, debugCanvas.height);
+
+    // MediaPipe 얼굴 랜드마크 표시 (최우선)
+    if (window.currentDebugData && window.currentDebugData.systemStatus && 
+        window.currentDebugData.systemStatus.mediaPipeStatus && 
+        window.currentDebugData.systemStatus.mediaPipeStatus.hasResults) {
+      drawMediaPipeLandmarks(debugCtx);
+      return; // MediaPipe 랜드마크가 있으면 다른 그리기는 생략
+    }
 
     // 카메라 해상도에서 디버그 캔버스 해상도로 좌표 변환 비율
     const scaleX = debugCanvas.width / 640;
@@ -1177,5 +1626,12 @@ document.addEventListener('DOMContentLoaded', function() {
         updateUI(true);
       }
     });
+  });
+
+  // 페이지 언로드 시 PIP 창 정리
+  window.addEventListener('beforeunload', function() {
+    if (isPipMode) {
+      closePipWindow();
+    }
   });
 });
