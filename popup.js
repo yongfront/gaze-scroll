@@ -21,6 +21,7 @@ document.addEventListener('DOMContentLoaded', function() {
   const scrollSpeed = document.getElementById('scrollSpeed');
   const topZone = document.getElementById('topZone');
   const bottomZone = document.getElementById('bottomZone');
+  const cameraResolution = document.getElementById('cameraResolution');
   // debugMode 체크 박스 제거됨 - 항상 디버그 모드로 작동
   const debugPanel = document.getElementById('debugPanel');
   const debugVideo = document.getElementById('debugVideo');
@@ -48,6 +49,7 @@ document.addEventListener('DOMContentLoaded', function() {
   const leftEyeConfidence = document.getElementById('leftEyeConfidence');
   const rightEyeConfidence = document.getElementById('rightEyeConfidence');
   const skinPixels = document.getElementById('skinPixels');
+  const headTilt = document.getElementById('headTilt');
 
   let isActive = false;
   let pipWindow = null;
@@ -204,6 +206,25 @@ document.addEventListener('DOMContentLoaded', function() {
     input.addEventListener('change', saveSettings);
   });
 
+  // 카메라 해상도 변경 이벤트 (즉시 적용)
+  cameraResolution.addEventListener('change', function() {
+    saveSettings();
+    
+    // 활성화된 상태라면 즉시 해상도 변경
+    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+      chrome.tabs.sendMessage(tabs[0].id, {
+        action: 'setCameraResolution',
+        resolution: cameraResolution.value
+      }, function(response) {
+        if (chrome.runtime.lastError) {
+          console.warn('해상도 변경 실패:', chrome.runtime.lastError);
+        } else {
+          console.log('✅ 카메라 해상도 변경됨:', cameraResolution.value);
+        }
+      });
+    });
+  });
+
   // debugMode 이벤트 리스너 제거됨 - 항상 디버그 모드로 작동
 
   // 줌 기능 제거됨
@@ -313,7 +334,8 @@ document.addEventListener('DOMContentLoaded', function() {
     return {
       scrollSpeed: parseInt(scrollSpeed.value),
       topZone: parseInt(topZone.value),
-      bottomZone: parseInt(bottomZone.value)
+      bottomZone: parseInt(bottomZone.value),
+      cameraResolution: cameraResolution.value
       // debugMode 제거됨 - 항상 디버그 모드로 작동
       // mirrorMode 제거됨 - 항상 반전 모드로 고정
       // zoomLevel 제거됨 - 1배율 고정
@@ -334,6 +356,7 @@ document.addEventListener('DOMContentLoaded', function() {
         scrollSpeed.value = settings.scrollSpeed || 50;
         topZone.value = settings.topZone || 30;
         bottomZone.value = settings.bottomZone || 30;
+        cameraResolution.value = settings.cameraResolution || 'HD';
         // debugMode 체크 박스 제거됨 - 항상 디버그 모드로 작동
         // mirrorMode 제거됨 - 항상 반전 모드로 고정
         // zoomLevel 제거됨 - 1배율 고정
@@ -799,6 +822,31 @@ document.addEventListener('DOMContentLoaded', function() {
       skinPixels.style.color = '#ff6b6b';
     }
 
+    // 머리 기울기 정보 업데이트
+    if (data.headTiltInfo && headTilt) {
+      const tiltInfo = data.headTiltInfo;
+      if (tiltInfo.isValid) {
+        const pitchDegrees = (tiltInfo.pitch * 45).toFixed(1); // -45° ~ +45° 범위로 변환
+        headTilt.textContent = `${pitchDegrees}°`;
+        
+        // 색상으로 기울기 정도 표시
+        const absAngle = Math.abs(parseFloat(pitchDegrees));
+        if (absAngle < 5) {
+          headTilt.style.color = '#51cf66'; // 녹색: 정면
+        } else if (absAngle < 15) {
+          headTilt.style.color = '#ffd43b'; // 노란색: 약간 기울임
+        } else {
+          headTilt.style.color = '#ff6b6b'; // 빨간색: 많이 기울임
+        }
+      } else {
+        headTilt.textContent = '감지불가';
+        headTilt.style.color = '#868e96';
+      }
+    } else if (headTilt) {
+      headTilt.textContent = '0.0°';
+      headTilt.style.color = '#868e96';
+    }
+
     // 눈 추적 상태 표시 (기존)
     if (data.eyeTrackingState) {
       const state = data.eyeTrackingState;
@@ -820,6 +868,17 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // 전역에서 접근 가능하도록 현재 디버그 데이터 저장
     window.currentDebugData = data;
+
+    // MediaPipe 디버깅 정보 출력
+    if (data.mediaPipeDebug) {
+      console.log('🔍 MediaPipe 디버그:', {
+        초기화됨: data.mediaPipeDebug.initialized,
+        결과있음: data.mediaPipeDebug.hasResults,
+        랜드마크있음: data.mediaPipeDebug.hasLandmarks,
+        랜드마크수: data.mediaPipeDebug.landmarkCount,
+        실제랜드마크데이터: !!data.mediaPipeLandmarks
+      });
+    }
 
     if (data.frameImage) {
       displayDebugFrame(data.frameImage);
@@ -1205,125 +1264,287 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   // MediaPipe 얼굴 랜드마크 그리기 함수
-  function drawMediaPipeLandmarks(ctx) {
-    if (!window.currentDebugData || !window.currentDebugData.mediaPipeLandmarks) {
+  function drawEnhancedFaceDetection(ctx) {
+    if (!window.currentDebugData) {
       return;
     }
 
-    const landmarks = window.currentDebugData.mediaPipeLandmarks;
+    const data = window.currentDebugData;
+    
+    // MediaPipe 데이터가 있으면 고급 표시
+    if (data.mediaPipeLandmarks && data.mediaPipeLandmarks.length > 0) {
+      drawAdvancedMediaPipeFace(ctx, data);
+    } 
+    // 기본 얼굴 감지 결과 표시
+    else if (data.currentFaceRegion) {
+      drawBasicFaceDetection(ctx, data);
+    }
+    // 얼굴을 찾지 못했을 때
+    else {
+      drawNoFaceDetected(ctx);
+    }
+  }
+
+  function drawAdvancedMediaPipeFace(ctx, data) {
+    const landmarks = data.mediaPipeLandmarks;
+
+    // 화면 클리어 (반투명)
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+    ctx.fillRect(0, 0, debugCanvas.width, debugCanvas.height);
+
+    // 얼굴 윤곽선 그리기
+    drawFaceOutline(ctx, landmarks);
+    
+    // 눈 영역 강조 표시
+    drawEyeRegions(ctx, landmarks);
+    
+    // 코와 입 표시
+    drawFacialFeatures(ctx, landmarks);
+    
+    // 얼굴 중심점과 정보 표시
+    drawFaceInfo(ctx, data);
+  }
+
+  function drawFaceOutline(ctx, landmarks) {
+    // 얼굴 윤곽선 주요 포인트들
+    const faceOval = [10, 151, 234, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150];
+    
+    ctx.strokeStyle = 'rgba(255, 215, 0, 0.8)'; // 골드 색상
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    
+    for (let i = 0; i < faceOval.length; i++) {
+      const point = landmarks[faceOval[i]];
+      const x = point.x * debugCanvas.width;
+      const y = point.y * debugCanvas.height;
+      
+      if (i === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+    }
+    ctx.closePath();
+    ctx.stroke();
+    
+    // 얼굴 윤곽선 내부 반투명 채우기
+    ctx.fillStyle = 'rgba(255, 215, 0, 0.1)';
+    ctx.fill();
+  }
+
+  function drawEyeRegions(ctx, landmarks) {
+    // 왼쪽 눈 (빨간색)
+    const leftEyePoints = [362, 398, 384, 385, 386, 387, 388, 466, 263, 249, 390, 373, 374, 380, 381, 382];
+    drawEyeRegion(ctx, landmarks, leftEyePoints, 'rgba(255, 50, 50, 0.9)', '왼쪽 눈');
+    
+    // 오른쪽 눈 (파란색)
+    const rightEyePoints = [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246];
+    drawEyeRegion(ctx, landmarks, rightEyePoints, 'rgba(50, 150, 255, 0.9)', '오른쪽 눈');
+  }
+
+  function drawEyeRegion(ctx, landmarks, eyePoints, color, label) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+        ctx.beginPath();
+    
+    for (let i = 0; i < eyePoints.length; i++) {
+      const point = landmarks[eyePoints[i]];
+      const x = point.x * debugCanvas.width;
+      const y = point.y * debugCanvas.height;
+      
+      if (i === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+    }
+    ctx.closePath();
+    ctx.stroke();
+    
+    // 눈 영역 채우기
+    ctx.fillStyle = color.replace('0.9', '0.2');
+    ctx.fill();
+    
+    // 눈 중심점 계산 및 표시
+    let centerX = 0, centerY = 0;
+    for (const index of eyePoints) {
+      centerX += landmarks[index].x;
+      centerY += landmarks[index].y;
+    }
+    centerX = (centerX / eyePoints.length) * debugCanvas.width;
+    centerY = (centerY / eyePoints.length) * debugCanvas.height;
+    
+    // 눈 중심에 큰 점 표시
+    ctx.fillStyle = color;
+          ctx.beginPath();
+    ctx.arc(centerX, centerY, 6, 0, 2 * Math.PI);
+          ctx.fill();
+          
+    // 눈 중심에 흰색 테두리
+          ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+          ctx.stroke();
+          
+    // 눈 라벨
+            ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 11px Arial';
+    ctx.fillText(label, centerX - 20, centerY - 15);
+  }
+
+  function drawFacialFeatures(ctx, landmarks) {
+    // 코 (주황색)
+    const nosePoints = [1, 2, 5, 4, 6, 19, 20, 94, 125, 141, 235, 236];
+    drawFeaturePoints(ctx, landmarks, nosePoints, 'rgba(255, 165, 0, 0.8)', 4);
+    
+    // 입 (마젠타)
+    const mouthPoints = [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95];
+    drawFeaturePoints(ctx, landmarks, mouthPoints, 'rgba(255, 20, 147, 0.8)', 3);
+  }
+
+  function drawFeaturePoints(ctx, landmarks, points, color, size) {
+            ctx.fillStyle = color;
+    for (const index of points) {
+      const point = landmarks[index];
+      const x = point.x * debugCanvas.width;
+      const y = point.y * debugCanvas.height;
+      
+      ctx.beginPath();
+      ctx.arc(x, y, size, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+  }
+
+  function drawFaceInfo(ctx, data) {
+    // 정보 패널 배경
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.fillRect(5, 5, 300, 120);
+    
+    // 제목
+    ctx.fillStyle = '#00ff88';
+    ctx.font = 'bold 14px Arial';
+    ctx.fillText('🧠 MediaPipe Face Mesh 감지됨', 10, 25);
+    
+    // 상세 정보
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '11px Arial';
+    let y = 45;
+    
+    // 랜드마크 수
+    ctx.fillText(`랜드마크: ${data.mediaPipeLandmarks.length}개`, 10, y);
+    y += 15;
+    
+    // 얼굴 신뢰도 (있다면)
+    if (data.systemStatus && data.systemStatus.mediaPipeStatus) {
+      const mpStatus = data.systemStatus.mediaPipeStatus;
+      ctx.fillStyle = mpStatus.hasResults ? '#00ff88' : '#ffaa00';
+      ctx.fillText(`상태: ${mpStatus.hasResults ? '활성' : '대기중'}`, 10, y);
+      y += 15;
+    }
+    
+    // 머리 자세 정보 (있다면)
+    if (data.headTiltInfo && data.headTiltInfo.isValid) {
+      const tilt = data.headTiltInfo;
+      ctx.fillStyle = '#87ceeb';
+      ctx.fillText(`머리 자세: ${(tilt.pitch * 45).toFixed(1)}° (상하)`, 10, y);
+      y += 15;
+      ctx.fillText(`          ${(tilt.yaw * 45).toFixed(1)}° (좌우)`, 10, y);
+      y += 15;
+    }
+    
+    // 품질 점수 (있다면)
+    if (data.eyeTracking && data.eyeTracking.quality) {
+      const quality = data.eyeTracking.quality;
+      ctx.fillStyle = quality.status === 'good' ? '#00ff88' : 
+                     quality.status === 'fair' ? '#ffaa00' : '#ff6666';
+      ctx.fillText(`추적 품질: ${(quality.score * 100).toFixed(0)}% (${quality.status})`, 10, y);
+    }
+  }
+
+  function drawBasicFaceDetection(ctx, data) {
+    const faceRegion = data.currentFaceRegion;
+    
+    // 화면 클리어 (반투명)
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+    ctx.fillRect(0, 0, debugCanvas.width, debugCanvas.height);
+    
+    // 얼굴 영역 표시
     const scaleX = debugCanvas.width / 640;
     const scaleY = debugCanvas.height / 480;
 
-    // 전체 랜드마크 표시 (작은 점들)
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
-    for (let i = 0; i < landmarks.length; i++) {
-      const x = landmarks[i].x * debugCanvas.width;
-      const y = landmarks[i].y * debugCanvas.height;
-      
-      ctx.beginPath();
-      ctx.arc(x, y, 1, 0, 2 * Math.PI);
-      ctx.fill();
-    }
+      const faceX = faceRegion.x * scaleX;
+      const faceY = faceRegion.y * scaleY;
+      const faceWidth = faceRegion.width * scaleX;
+      const faceHeight = faceRegion.height * scaleY;
 
-    // 주요 특징점들을 더 크게 표시
-    const importantLandmarks = {
-      // 얼굴 윤곽 (일부만)
-      faceOval: [10, 151, 234, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234],
-      
-      // 눈썹
-      leftEyebrow: [70, 63, 105, 66, 107, 55, 65, 52, 53, 46],
-      rightEyebrow: [296, 334, 293, 300, 276, 283, 282, 295, 285, 336],
-      
-      // 눈
-      leftEye: [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246],
-      rightEye: [362, 398, 384, 385, 386, 387, 388, 466, 263, 249, 390, 373, 374, 380, 381, 382],
-      
-      // 코
-      nose: [1, 2, 5, 4, 6, 19, 20, 94, 125, 141, 235, 236, 3, 51, 48, 115, 131, 134, 102, 49, 220, 305, 284, 278],
-      
-      // 입
-      mouth: [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95]
-    };
-
-    // 각 특징점 그룹별로 색상을 다르게 표시
-    const colors = {
-      faceOval: '#ffff00',     // 노란색 - 얼굴 윤곽
-      leftEyebrow: '#00ff00',  // 녹색 - 왼쪽 눈썹
-      rightEyebrow: '#00ff00', // 녹색 - 오른쪽 눈썹
-      leftEye: '#ff0000',      // 빨간색 - 왼쪽 눈
-      rightEye: '#0080ff',     // 파란색 - 오른쪽 눈
-      nose: '#ff8000',         // 주황색 - 코
-      mouth: '#ff00ff'         // 마젠타 - 입
-    };
-
-    Object.keys(importantLandmarks).forEach(feature => {
-      const indices = importantLandmarks[feature];
-      const color = colors[feature];
-      
-      ctx.fillStyle = color;
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
-      
-      // 특징점들을 선으로 연결
-      if (indices.length > 1) {
-        ctx.beginPath();
-        const firstPoint = landmarks[indices[0]];
-        ctx.moveTo(firstPoint.x * debugCanvas.width, firstPoint.y * debugCanvas.height);
-        
-        for (let i = 1; i < indices.length; i++) {
-          const point = landmarks[indices[i]];
-          ctx.lineTo(point.x * debugCanvas.width, point.y * debugCanvas.height);
-        }
-        
-        // 눈과 입은 폐곡선으로 연결
-        if (feature.includes('Eye') || feature === 'mouth') {
-          ctx.closePath();
-        }
-        ctx.stroke();
-      }
-      
-      // 각 특징점을 큰 점으로 표시
-      indices.forEach(index => {
-        if (landmarks[index]) {
-          const x = landmarks[index].x * debugCanvas.width;
-          const y = landmarks[index].y * debugCanvas.height;
-          
-          ctx.beginPath();
-          ctx.arc(x, y, 3, 0, 2 * Math.PI);
-          ctx.fill();
-          
-          // 중요한 점들은 번호도 표시
-          if (feature === 'leftEye' || feature === 'rightEye') {
-            ctx.fillStyle = '#ffffff';
-            ctx.font = '8px Arial';
-            ctx.fillText(index.toString(), x + 5, y - 5);
-            ctx.fillStyle = color;
-          }
-        }
-      });
-    });
-
-    // 정보 텍스트 표시
+    // 얼굴 영역 윤곽선
+    ctx.strokeStyle = 'rgba(255, 255, 0, 0.9)';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(faceX, faceY, faceWidth, faceHeight);
+    
+    // 얼굴 영역 채우기
+    ctx.fillStyle = 'rgba(255, 255, 0, 0.15)';
+    ctx.fillRect(faceX, faceY, faceWidth, faceHeight);
+    
+    // 얼굴 중심점
+    const centerX = faceX + faceWidth / 2;
+    const centerY = faceY + faceHeight / 2;
+    
+    ctx.fillStyle = '#ffff00';
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, 8, 0, 2 * Math.PI);
+    ctx.fill();
+    
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    
+    // 정보 표시
     ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
-    ctx.fillRect(5, 5, 280, 100);
+    ctx.fillRect(5, 5, 250, 80);
+    
+    ctx.fillStyle = '#ffff00';
+    ctx.font = 'bold 14px Arial';
+    ctx.fillText('📷 기본 얼굴 감지', 10, 25);
     
     ctx.fillStyle = '#ffffff';
-    ctx.font = '12px Arial';
-    ctx.fillText('🧠 MediaPipe Face Mesh (468개 랜드마크)', 10, 20);
-    ctx.fillStyle = '#ffff00';
-    ctx.fillText('노란색: 얼굴 윤곽', 10, 35);
-    ctx.fillStyle = '#ff0000';
-    ctx.fillText('빨간색: 왼쪽 눈', 10, 50);
-    ctx.fillStyle = '#0080ff';
-    ctx.fillText('파란색: 오른쪽 눈', 10, 65);
-    ctx.fillStyle = '#00ff00';
-    ctx.fillText('녹색: 눈썹', 10, 80);
-    ctx.fillStyle = '#ff8000';
-    ctx.fillText('주황색: 코', 150, 35);
-    ctx.fillStyle = '#ff00ff';
-    ctx.fillText('마젠타: 입', 150, 50);
+    ctx.font = '11px Arial';
+    ctx.fillText(`피부톤: ${faceRegion.skinPercentage || '0'}%`, 10, 45);
+    ctx.fillText(`픽셀: ${faceRegion.skinPixels || 0}/${faceRegion.totalSamples || 0}`, 10, 60);
+    ctx.fillText(`위치: ${faceX.toFixed(0)}, ${faceY.toFixed(0)}`, 10, 75);
+  }
+
+  function drawNoFaceDetected(ctx) {
+    // 화면 클리어
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.fillRect(0, 0, debugCanvas.width, debugCanvas.height);
+    
+    // 메시지 표시
     ctx.fillStyle = '#ffffff';
-    ctx.fillText(`랜드마크 수: ${landmarks.length}개`, 150, 65);
+    ctx.font = 'bold 16px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('👤 얼굴을 찾는 중...', debugCanvas.width / 2, debugCanvas.height / 2 - 20);
+    
+    ctx.fillStyle = '#aaaaaa';
+    ctx.font = '12px Arial';
+    ctx.fillText('카메라를 정면으로 향해주세요', debugCanvas.width / 2, debugCanvas.height / 2 + 10);
+    ctx.fillText('충분한 조명이 있는지 확인해주세요', debugCanvas.width / 2, debugCanvas.height / 2 + 30);
+    
+    ctx.textAlign = 'left';
+    
+    // 로딩 애니메이션 (간단한 점들)
+    const time = Date.now() / 500;
+    for (let i = 0; i < 3; i++) {
+      const alpha = (Math.sin(time + i * 0.5) + 1) / 2;
+      ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+      ctx.beginPath();
+      ctx.arc(debugCanvas.width / 2 - 20 + i * 20, debugCanvas.height / 2 + 60, 4, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+  }
+
+  function drawMediaPipeLandmarks(ctx) {
+    // 기존 함수는 새로운 enhanced 버전으로 대체됨
+    drawEnhancedFaceDetection(ctx);
   }
 
   function drawGazeIndicator(gazeX, gazeY, eyeRegions, faceRegion = null) {
@@ -1332,273 +1553,53 @@ document.addEventListener('DOMContentLoaded', function() {
       debugCtx = debugCanvas.getContext('2d');
     }
 
-    // 캔버스 클리어 (반투명하게 해서 영상이 보이도록)
-    debugCtx.fillStyle = 'rgba(0, 0, 0, 0.3)';
-    debugCtx.fillRect(0, 0, debugCanvas.width, debugCanvas.height);
+    // 향상된 얼굴 감지 표시
+    drawEnhancedFaceDetection(debugCtx);
 
-    // MediaPipe 얼굴 랜드마크 표시 (최우선)
-    if (window.currentDebugData && window.currentDebugData.systemStatus && 
-        window.currentDebugData.systemStatus.mediaPipeStatus && 
-        window.currentDebugData.systemStatus.mediaPipeStatus.hasResults) {
-      drawMediaPipeLandmarks(debugCtx);
-      return; // MediaPipe 랜드마크가 있으면 다른 그리기는 생략
+    // 시선 방향 표시 (얼굴이 감지된 경우에만)
+    if (gazeX !== undefined && gazeY !== undefined && 
+        (window.currentDebugData && 
+         (window.currentDebugData.mediaPipeLandmarks || window.currentDebugData.currentFaceRegion))) {
+      drawGazeDirection(debugCtx, gazeX, gazeY);
     }
+  }
 
-    // 카메라 해상도에서 디버그 캔버스 해상도로 좌표 변환 비율
-    const scaleX = debugCanvas.width / 640;
-    const scaleY = debugCanvas.height / 480;
-
-    // 얼굴 영역 표시 (얼굴을 찾았을 때)
-    if (faceRegion) {
-      const faceX = faceRegion.x * scaleX;
-      const faceY = faceRegion.y * scaleY;
-      const faceWidth = faceRegion.width * scaleX;
-      const faceHeight = faceRegion.height * scaleY;
-
-      // 얼굴 영역 윤곽선 (노란색)
-      debugCtx.strokeStyle = 'rgba(255, 255, 0, 0.8)';
-      debugCtx.lineWidth = 3;
-      debugCtx.strokeRect(faceX, faceY, faceWidth, faceHeight);
-
-      // 얼굴 영역 배경 (반투명)
-      debugCtx.fillStyle = 'rgba(255, 255, 0, 0.1)';
-      debugCtx.fillRect(faceX, faceY, faceWidth, faceHeight);
-
-      // 얼굴 영역 라벨 및 정보
-      debugCtx.fillStyle = '#ffff00';
-      debugCtx.font = 'bold 12px Arial';
-      const faceLabel = `얼굴 (${faceRegion.skinPercentage || '0'}%)`;
-      debugCtx.fillText(faceLabel, faceX, faceY - 8);
-
-      // 눈을 찾을 것으로 예상되는 영역 표시
-      const eyeY = faceY + faceHeight * 0.35;
-      const eyeHeight = faceHeight * 0.12;
-
-      // 왼쪽 눈 검색 영역
-      const leftEyeX = faceX + faceWidth * 0.25;
-      const eyeWidth = faceWidth * 0.15;
-      debugCtx.strokeStyle = 'rgba(0, 255, 0, 0.5)';
-      debugCtx.lineWidth = 2;
-      debugCtx.strokeRect(leftEyeX, eyeY, eyeWidth, eyeHeight);
-
-      // 오른쪽 눈 검색 영역
-      const rightEyeX = faceX + faceWidth * 0.6;
-      debugCtx.strokeStyle = 'rgba(0, 128, 255, 0.5)';
-      debugCtx.lineWidth = 2;
-      debugCtx.strokeRect(rightEyeX, eyeY, eyeWidth, eyeHeight);
-
-      // 검색 영역 라벨
-      debugCtx.fillStyle = '#ffffff';
-      debugCtx.font = '10px Arial';
-      debugCtx.fillText('눈검색', leftEyeX, eyeY - 3);
-      debugCtx.fillText('눈검색', rightEyeX, eyeY - 3);
-    }
-
-    // 눈 영역 표시 (더 크고 명확하게)
-    if (eyeRegions && (eyeRegions.leftEye || eyeRegions.rightEye)) {
-      // 왼쪽 눈 영역 표시
-      if (eyeRegions.leftEye && eyeRegions.leftEye.confidence > 0.05) {
-        const leftEye = eyeRegions.leftEye;
-        const eyeX = leftEye.x * scaleX;
-        const eyeY = leftEye.y * scaleY;
-        const eyeWidth = leftEye.width * scaleX;
-        const eyeHeight = leftEye.height * scaleY;
-
-        const alpha = Math.max(0.4, leftEye.confidence);
-
-        // 눈 영역 배경 (더 큰 사각형)
-        debugCtx.fillStyle = `rgba(0, 255, 0, ${alpha * 0.3})`;
-        debugCtx.fillRect(eyeX - 5, eyeY - 5, eyeWidth + 10, eyeHeight + 10);
-
-        // 눈 영역 윤곽선 (더 두껍게)
-        debugCtx.strokeStyle = `rgba(0, 255, 0, ${alpha})`;
-        debugCtx.lineWidth = 4;
-        debugCtx.strokeRect(eyeX, eyeY, eyeWidth, eyeHeight);
-
-        // 눈 아이콘 표시 (눈동자 모양)
-        const centerX_eye = eyeX + eyeWidth / 2;
-        const centerY_eye = eyeY + eyeHeight / 2;
-        const eyeRadius = Math.min(eyeWidth, eyeHeight) / 3;
-
-        // 눈동자 (큰 원)
-        debugCtx.fillStyle = `rgba(0, 255, 0, ${alpha * 0.8})`;
-        debugCtx.beginPath();
-        debugCtx.arc(centerX_eye, centerY_eye, eyeRadius, 0, 2 * Math.PI);
-        debugCtx.fill();
-
-        // 눈동자 테두리
-        debugCtx.strokeStyle = '#ffffff';
-        debugCtx.lineWidth = 2;
-        debugCtx.stroke();
-
-        // 눈동자 중심점 (작은 검은 점)
-        debugCtx.fillStyle = '#000000';
-        debugCtx.beginPath();
-        debugCtx.arc(centerX_eye, centerY_eye, eyeRadius * 0.4, 0, 2 * Math.PI);
-        debugCtx.fill();
-
-        // 눈썹 표시 (눈 위쪽에 호 형태로)
-        debugCtx.strokeStyle = '#ffffff';
-        debugCtx.lineWidth = 3;
-        debugCtx.beginPath();
-        debugCtx.moveTo(eyeX - 2, eyeY - 8);
-        debugCtx.quadraticCurveTo(eyeX + eyeWidth / 2, eyeY - 12, eyeX + eyeWidth + 2, eyeY - 8);
-        debugCtx.stroke();
-
-        // 신뢰도 표시 (더 큰 글씨로)
-        debugCtx.fillStyle = '#ffffff';
-        debugCtx.font = 'bold 12px Arial';
-        debugCtx.fillText(`왼쪽눈 ${(leftEye.confidence * 100).toFixed(0)}%`, eyeX, eyeY - 15);
-      }
-
-      // 오른쪽 눈 영역 표시
-      if (eyeRegions.rightEye && eyeRegions.rightEye.confidence > 0.05) {
-        const rightEye = eyeRegions.rightEye;
-        const eyeX = rightEye.x * scaleX;
-        const eyeY = rightEye.y * scaleY;
-        const eyeWidth = rightEye.width * scaleX;
-        const eyeHeight = rightEye.height * scaleY;
-
-        const alpha = Math.max(0.4, rightEye.confidence);
-
-        // 눈 영역 배경 (더 큰 사각형)
-        debugCtx.fillStyle = `rgba(0, 128, 255, ${alpha * 0.3})`;
-        debugCtx.fillRect(eyeX - 5, eyeY - 5, eyeWidth + 10, eyeHeight + 10);
-
-        // 눈 영역 윤곽선 (더 두껍게)
-        debugCtx.strokeStyle = `rgba(0, 128, 255, ${alpha})`;
-        debugCtx.lineWidth = 4;
-        debugCtx.strokeRect(eyeX, eyeY, eyeWidth, eyeHeight);
-
-        // 눈 아이콘 표시 (눈동자 모양)
-        const centerX_eye = eyeX + eyeWidth / 2;
-        const centerY_eye = eyeY + eyeHeight / 2;
-        const eyeRadius = Math.min(eyeWidth, eyeHeight) / 3;
-
-        // 눈동자 (큰 원)
-        debugCtx.fillStyle = `rgba(0, 128, 255, ${alpha * 0.8})`;
-        debugCtx.beginPath();
-        debugCtx.arc(centerX_eye, centerY_eye, eyeRadius, 0, 2 * Math.PI);
-        debugCtx.fill();
-
-        // 눈동자 테두리
-        debugCtx.strokeStyle = '#ffffff';
-        debugCtx.lineWidth = 2;
-        debugCtx.stroke();
-
-        // 눈동자 중심점 (작은 검은 점)
-        debugCtx.fillStyle = '#000000';
-        debugCtx.beginPath();
-        debugCtx.arc(centerX_eye, centerY_eye, eyeRadius * 0.4, 0, 2 * Math.PI);
-        debugCtx.fill();
-
-        // 눈썹 표시 (눈 위쪽에 호 형태로)
-        debugCtx.strokeStyle = '#ffffff';
-        debugCtx.lineWidth = 3;
-        debugCtx.beginPath();
-        debugCtx.moveTo(eyeX - 2, eyeY - 8);
-        debugCtx.quadraticCurveTo(eyeX + eyeWidth / 2, eyeY - 12, eyeX + eyeWidth + 2, eyeY - 8);
-        debugCtx.stroke();
-
-        // 신뢰도 표시 (더 큰 글씨로)
-        debugCtx.fillStyle = '#ffffff';
-        debugCtx.font = 'bold 12px Arial';
-        debugCtx.fillText(`오른쪽눈 ${(rightEye.confidence * 100).toFixed(0)}%`, eyeX, eyeY - 15);
-      }
-
-      // 두 눈 사이에 선 연결 (눈 추적 상태 시각화)
-      if (eyeRegions.leftEye && eyeRegions.rightEye &&
-          eyeRegions.leftEye.confidence > 0.05 && eyeRegions.rightEye.confidence > 0.05) {
-
-        const leftCenterX = (eyeRegions.leftEye.x + eyeRegions.leftEye.width / 2) * scaleX;
-        const leftCenterY = (eyeRegions.leftEye.y + eyeRegions.leftEye.height / 2) * scaleY;
-        const rightCenterX = (eyeRegions.rightEye.x + eyeRegions.rightEye.width / 2) * scaleX;
-        const rightCenterY = (eyeRegions.rightEye.y + eyeRegions.rightEye.height / 2) * scaleY;
-
-        // 눈 사이 거리 표시
-        const distance = Math.sqrt(Math.pow(rightCenterX - leftCenterX, 2) + Math.pow(rightCenterY - leftCenterY, 2));
-        debugCtx.fillStyle = '#ffff00';
-        debugCtx.font = '10px Arial';
-        debugCtx.fillText(`${distance.toFixed(0)}px`, (leftCenterX + rightCenterX) / 2, (leftCenterY + rightCenterY) / 2 - 10);
-
-        // 눈 사이 연결선 (더 두껍게)
-        debugCtx.strokeStyle = '#ffff00';
-        debugCtx.lineWidth = 3;
-        debugCtx.setLineDash([5, 5]);
-        debugCtx.beginPath();
-        debugCtx.moveTo(leftCenterX, leftCenterY);
-        debugCtx.lineTo(rightCenterX, rightCenterY);
-        debugCtx.stroke();
-        debugCtx.setLineDash([]);
-      }
-    } else {
-      // 눈을 찾지 못했을 때 메시지 표시
-      debugCtx.fillStyle = 'rgba(255, 255, 255, 0.9)';
-      debugCtx.font = 'bold 16px Arial';
-      debugCtx.textAlign = 'center';
-      debugCtx.fillText('👁️ 눈을 찾는 중...', debugCanvas.width / 2, debugCanvas.height / 2);
-      debugCtx.fillText('얼굴을 정면으로 향해주세요', debugCanvas.width / 2, debugCanvas.height / 2 + 25);
-      debugCtx.textAlign = 'left';
-    }
-
-    // 시선 방향 표시 (눈 추적이 활성화되었을 때만)
-    if (gazeX !== undefined && gazeY !== undefined && eyeRegions &&
-        ((eyeRegions.leftEye && eyeRegions.leftEye.confidence > 0.05) ||
-         (eyeRegions.rightEye && eyeRegions.rightEye.confidence > 0.05))) {
-
+  function drawGazeDirection(ctx, gazeX, gazeY) {
       const gazeScreenX = gazeX * debugCanvas.width;
       const gazeScreenY = gazeY * debugCanvas.height;
 
       // 시선 방향 십자가 (크고 명확하게)
-      debugCtx.strokeStyle = '#ff4444';
-      debugCtx.lineWidth = 4;
-      debugCtx.beginPath();
-      debugCtx.moveTo(gazeScreenX - 20, gazeScreenY);
-      debugCtx.lineTo(gazeScreenX + 20, gazeScreenY);
-      debugCtx.moveTo(gazeScreenX, gazeScreenY - 20);
-      debugCtx.lineTo(gazeScreenX, gazeScreenY + 20);
-      debugCtx.stroke();
+    ctx.strokeStyle = '#ff4444';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(gazeScreenX - 20, gazeScreenY);
+    ctx.lineTo(gazeScreenX + 20, gazeScreenY);
+    ctx.moveTo(gazeScreenX, gazeScreenY - 20);
+    ctx.lineTo(gazeScreenX, gazeScreenY + 20);
+    ctx.stroke();
 
       // 시선 방향 원형 표시
-      debugCtx.strokeStyle = '#ff4444';
-      debugCtx.lineWidth = 2;
-      debugCtx.beginPath();
-      debugCtx.arc(gazeScreenX, gazeScreenY, 15, 0, 2 * Math.PI);
-      debugCtx.stroke();
+    ctx.strokeStyle = '#ff4444';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(gazeScreenX, gazeScreenY, 15, 0, 2 * Math.PI);
+    ctx.stroke();
+
+    // 내부 원 (더 진한 색)
+    ctx.fillStyle = 'rgba(255, 68, 68, 0.3)';
+    ctx.fill();
 
       // 시선 방향 텍스트
-      debugCtx.fillStyle = '#ff4444';
-      debugCtx.font = 'bold 12px Arial';
-      debugCtx.textAlign = 'center';
-      debugCtx.fillText('👁️', gazeScreenX, gazeScreenY - 25);
-      debugCtx.textAlign = 'left';
-    }
-
-    // 디버그 정보 표시 (좌상단)
-    debugCtx.fillStyle = 'rgba(0, 0, 0, 0.8)';
-    debugCtx.fillRect(5, 5, 250, 80);
-
-    debugCtx.fillStyle = '#ffffff';
-    debugCtx.font = '10px monospace';
-    debugCtx.fillText(`해상도: 640x480 (1배율)`, 10, 20);
-
-    const eyeStatus = eyeRegions && (eyeRegions.leftEye || eyeRegions.rightEye) ? '활성' : '비활성';
-    const eyeStatusColor = eyeStatus === '활성' ? '#00ff00' : '#ff6b6b';
-    debugCtx.fillStyle = eyeStatusColor;
-    debugCtx.fillText(`눈 추적: ${eyeStatus}`, 10, 35);
-
-    debugCtx.fillStyle = '#ffffff';
-    debugCtx.fillText(`시선: ${gazeX !== undefined ? `X:${(gazeX * 100).toFixed(1)}% Y:${(gazeY * 100).toFixed(1)}%` : '없음'}`, 10, 50);
-
-    // 얼굴 감지 정보 추가
-    if (faceRegion) {
-      const faceInfo = `얼굴: ${faceRegion.skinPercentage || '0'}% (${faceRegion.skinPixels || 0}/${faceRegion.totalSamples || 0})`;
-      debugCtx.fillStyle = '#ffff00';
-      debugCtx.fillText(faceInfo, 10, 65);
-    } else {
-      debugCtx.fillStyle = '#ff6b6b';
-      debugCtx.fillText('얼굴: 감지되지 않음', 10, 65);
-    }
+    ctx.fillStyle = '#ff4444';
+    ctx.font = 'bold 14px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('👁️', gazeScreenX, gazeScreenY - 25);
+    
+    // 좌표 표시
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '10px Arial';
+    ctx.fillText(`(${(gazeX * 100).toFixed(0)}%, ${(gazeY * 100).toFixed(0)}%)`, gazeScreenX, gazeScreenY + 35);
+    ctx.textAlign = 'left';
   }
 
   function showError(message) {

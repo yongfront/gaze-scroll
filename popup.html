@@ -78,6 +78,16 @@
                   step="5"
                 />
               </div>
+              <div class="setting-item">
+                <span class="setting-label">카메라 해상도</span>
+                <select class="setting-input" id="cameraResolution">
+                  <option value="SD">480p (표준)</option>
+                  <option value="HD" selected>720p (HD)</option>
+                  <option value="FHD">1080p (Full HD)</option>
+                  <option value="QHD">1440p (QHD)</option>
+                  <option value="4K">2160p (4K UHD)</option>
+                </select>
+              </div>
               <!-- 디버그 모드 체크 박스 제거됨 - 항상 디버그 모드로 작동 -->
             </div>
           </div>
@@ -268,6 +278,10 @@
                 <div class="metric-item">
                   <span class="metric-label">피부톤 픽셀:</span>
                   <span class="metric-value" id="skinPixels">0/0 (0%)</span>
+                </div>
+                <div class="metric-item">
+                  <span class="metric-label">머리 기울기:</span>
+                  <span class="metric-value" id="headTilt">0.0°</span>
                 </div>
               </div>
 
